@@ -9,11 +9,18 @@ import TradePanel from './components/TradePanel';
 import { applyCityEdits, type GridCell, type VoxelGridData } from './components/VoxelGrid';
 import { reducers, tables } from './module_bindings';
 import type { EconomicData } from './module_bindings/types';
+import { buildBuildingLookup, getBuildingAt, type BuildingFootprint, type BuildingLookup, type BuildingMapPayload } from './utils/buildingMap';
 
-type CityPayload = {
+type CityPayload = BuildingMapPayload & {
   shape: number[];
   voxcity_grid?: number[][][];
   grid?: number[][][];
+};
+
+type SelectedBuilding = BuildingFootprint & {
+  anchor: GridCell;
+  center: GridCell;
+  heightLevels: number;
 };
 
 type CitySummary = {
@@ -56,14 +63,23 @@ function normalizeGrid(grid: number[][][]): VoxelGridData {
   return grid.map(row => row.map(column => column.map(value => normalizeVoxelCode(value))));
 }
 
-function getColumnHeight(grid: VoxelGridData | null, x: number, z: number): number {
+function getBuildingColumnHeight(grid: VoxelGridData | null, x: number, z: number): number {
   const column = grid?.[x]?.[z];
   if (!column) return 1;
   let height = 0;
   for (let level = 0; level < column.length; level += 1) {
-    if (column[level] !== 0) height = level + 1;
+    if (column[level] === 1) height = level + 1;
   }
   return Math.max(1, height);
+}
+
+function getBuildingCenter(cells: GridCell[]): GridCell {
+  if (cells.length === 0) return { x: 0, z: 0 };
+  const totals = cells.reduce(
+    (sum, cell) => ({ x: sum.x + cell.x, z: sum.z + cell.z }),
+    { x: 0, z: 0 }
+  );
+  return { x: totals.x / cells.length, z: totals.z / cells.length };
 }
 
 function clampScore(value: number): number {
@@ -157,16 +173,24 @@ function styles() {
     .loading-screen, .error-screen { display: grid; place-items: center; width: 100vw; height: 100vh; padding: 2rem; color: #f4f1e8; background: #0a0a0a; text-align: center; }
     .loading-card, .error-card { width: min(520px, 100%); padding: 2rem; border: 1px solid rgba(255,255,255,.14); border-radius: 28px; background: rgba(0,0,0,.78); }
     .disaster-overlay { pointer-events: none; position: absolute; inset: 0; z-index: 6; opacity: .22; mix-blend-mode: screen; }
+    .building-info-panel { display: grid; gap: .35rem; min-width: 190px; padding: .7rem; border: 1px solid rgba(255,215,0,.65); border-radius: 12px; color: #f4f1e8; background: rgba(0,0,0,.88); box-shadow: 0 18px 50px rgba(0,0,0,.4); }
+    .building-info-panel strong { font-size: .92rem; line-height: 1.2; }
+    .building-info-panel span { color: #d8d4c8; font-size: .78rem; }
+    .building-info-panel div { display: flex; gap: .35rem; margin-top: .2rem; }
+    .building-info-panel button { padding: .35rem .5rem; font-size: .75rem; }
     @media (max-width: 760px) { .event-panel { top: auto; right: 1rem; bottom: 9.5rem; } .stats-panel { max-height: 45vh; } .toolbar { bottom: .5rem; } }
   `;
 }
 
 export default function App() {
   const [baseGrid, setBaseGrid] = useState<VoxelGridData | null>(null);
+  const [buildingLookup, setBuildingLookup] = useState<BuildingLookup | null>(null);
   const [cityShape, setCityShape] = useState<number[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<Tool>('select');
   const [selectedCell, setSelectedCell] = useState<GridCell | null>(null);
+  const [selectedBuilding, setSelectedBuilding] = useState<SelectedBuilding | null>(null);
+  const [, setPendingBuildingMove] = useState<SelectedBuilding | null>(null);
   const [moveSource, setMoveSource] = useState<MoveSource | null>(null);
   const [buildingHeight, setBuildingHeight] = useState(18);
   const [undoFeedback, setUndoFeedback] = useState<string | null>(null);
@@ -177,6 +201,7 @@ export default function App() {
   const playerNameRef = useRef(persistentValue(PLAYER_NAME_KEY, () => `Planner-${Math.floor(1000 + Math.random() * 9000)}`));
   const joinedIdentityRef = useRef<string | null>(null);
   const moveSourceRef = useRef<MoveSource | null>(null);
+  const pendingBuildingMoveRef = useRef<SelectedBuilding | null>(null);
 
   const connectionState = useSpacetimeDB();
   const [cityEdits] = useTable(tables.cityEdit);
@@ -216,8 +241,10 @@ export default function App() {
         const rawGrid = payload.voxcity_grid ?? payload.grid;
         if (!rawGrid) throw new Error('City payload did not include voxcity_grid');
         const normalized = normalizeGrid(rawGrid);
+        const lookup = buildBuildingLookup(payload);
         startTransition(() => {
           setBaseGrid(normalized);
+          setBuildingLookup(lookup);
           setCityShape(payload.shape);
         });
       } catch (error) {
@@ -251,6 +278,28 @@ export default function App() {
     setMoveSource(source);
   }, []);
 
+  const updatePendingBuildingMove = useCallback((building: SelectedBuilding | null) => {
+    pendingBuildingMoveRef.current = building;
+    setPendingBuildingMove(building);
+  }, []);
+
+  const hydrateSelectedBuilding = useCallback((building: BuildingFootprint, anchor: GridCell): SelectedBuilding => {
+    const heightLevels = Math.max(...building.cells.map(cell => getBuildingColumnHeight(liveCity, cell.x, cell.z)), 1);
+    return {
+      ...building,
+      anchor: { x: anchor.x, z: anchor.z },
+      center: getBuildingCenter(building.cells),
+      heightLevels,
+    };
+  }, [liveCity]);
+
+  const clearSelection = useCallback(() => {
+    setSelectedCell(null);
+    setSelectedBuilding(null);
+    updateMoveSource(null);
+    updatePendingBuildingMove(null);
+  }, [updateMoveSource, updatePendingBuildingMove]);
+
   const handleUndo = useCallback(() => {
     undoLastEdit()
       .then(() => {
@@ -269,7 +318,9 @@ export default function App() {
     resetCity()
       .then(() => {
         setSelectedCell(null);
+        setSelectedBuilding(null);
         updateMoveSource(null);
+        updatePendingBuildingMove(null);
         setResetFeedback('City reset');
         window.setTimeout(() => setResetFeedback(null), 1800);
       })
@@ -279,44 +330,85 @@ export default function App() {
         window.setTimeout(() => setResetFeedback(null), 3200);
       })
       .finally(() => setIsResetting(false));
-  }, [resetCity, updateMoveSource]);
+  }, [resetCity, updateMoveSource, updatePendingBuildingMove]);
 
   useEffect(() => {
-    if (activeTool !== 'move') updateMoveSource(null);
-  }, [activeTool, updateMoveSource]);
+    if (activeTool !== 'move') {
+      updateMoveSource(null);
+      updatePendingBuildingMove(null);
+    }
+  }, [activeTool, updateMoveSource, updatePendingBuildingMove]);
 
   const onlinePlayers = useMemo(() => players.filter(player => player.isOnline), [players]);
 
+  const removeWholeBuilding = useCallback((building: SelectedBuilding) => {
+    const edits = building.cells.map(cell => {
+      const height = getBuildingColumnHeight(liveCity, cell.x, cell.z);
+      return removeBuilding({
+        editId: uuidv4(),
+        fromX: cell.x,
+        fromZ: cell.z,
+        fromHeight: height,
+        label: `Removed ${building.name} cell at ${cell.x}, ${cell.z}`,
+      });
+    });
+    Promise.all(edits)
+      .catch(error => console.warn('Building remove failed:', error))
+      .finally(clearSelection);
+  }, [clearSelection, liveCity, removeBuilding]);
+
+  const moveWholeBuilding = useCallback((building: SelectedBuilding, target: GridCell) => {
+    const dx = target.x - building.anchor.x;
+    const dz = target.z - building.anchor.z;
+    const edits = building.cells.map(cell => {
+      const height = getBuildingColumnHeight(liveCity, cell.x, cell.z);
+      return moveBuilding({
+        editId: uuidv4(),
+        fromX: cell.x,
+        fromZ: cell.z,
+        fromHeight: height,
+        toX: cell.x + dx,
+        toZ: cell.z + dz,
+        height,
+        label: `Moved ${building.name} footprint cell from ${cell.x}, ${cell.z}`,
+        color: playerColorRef.current,
+      });
+    });
+    Promise.all(edits)
+      .catch(error => console.warn('Building move failed:', error))
+      .finally(clearSelection);
+  }, [clearSelection, liveCity, moveBuilding]);
+
+  const handleMoveSelected = useCallback(() => {
+    if (!selectedBuilding) return;
+    updatePendingBuildingMove(selectedBuilding);
+    updateMoveSource({ x: selectedBuilding.center.x, z: selectedBuilding.center.z, height: selectedBuilding.heightLevels });
+    setActiveTool('move');
+  }, [selectedBuilding, updateMoveSource, updatePendingBuildingMove]);
+
   const handleCellClick = (cell: GridCell) => {
-    setSelectedCell(cell);
+    if (cell.voxelType !== 1) return;
+
+    const building = getBuildingAt(buildingLookup, cell);
+    if (!building) return;
+    const hydratedBuilding = hydrateSelectedBuilding(building, cell);
+    setSelectedCell({ x: cell.x, z: cell.z, voxelType: cell.voxelType });
+    setSelectedBuilding(hydratedBuilding);
     moveCursor({ x: cell.x, z: cell.z }).catch(error => console.warn('Cursor update failed:', error));
 
     if (activeTool === 'remove') {
-      const height = getColumnHeight(liveCity, cell.x, cell.z);
-      removeBuilding({ editId: uuidv4(), fromX: cell.x, fromZ: cell.z, fromHeight: height, label: `Removed ${height}-level building at ${cell.x}, ${cell.z}` });
+      removeWholeBuilding(hydratedBuilding);
     } else if (activeTool === 'add_building') {
       placeBuilding({ editId: uuidv4(), toX: cell.x, toZ: cell.z, voxelType: 1, height: buildingHeight, label: `Added building at ${cell.x}, ${cell.z}`, color: playerColorRef.current });
     } else if (activeTool === 'add_park') {
       placeBuilding({ editId: uuidv4(), toX: cell.x, toZ: cell.z, voxelType: 2, height: 3, label: `Added park at ${cell.x}, ${cell.z}`, color: playerColorRef.current });
     } else if (activeTool === 'move') {
-      const currentMoveSource = moveSourceRef.current;
-      if (!currentMoveSource) {
-        updateMoveSource({ ...cell, height: getColumnHeight(liveCity, cell.x, cell.z) });
+      const currentBuildingMove = pendingBuildingMoveRef.current;
+      if (!currentBuildingMove) {
+        updatePendingBuildingMove(hydratedBuilding);
+        updateMoveSource({ x: hydratedBuilding.center.x, z: hydratedBuilding.center.z, height: hydratedBuilding.heightLevels });
       } else {
-        moveBuilding({
-          editId: uuidv4(),
-          fromX: currentMoveSource.x,
-          fromZ: currentMoveSource.z,
-          fromHeight: currentMoveSource.height,
-          toX: cell.x,
-          toZ: cell.z,
-          height: currentMoveSource.height,
-          label: `Moved ${currentMoveSource.height}-level building from ${currentMoveSource.x}, ${currentMoveSource.z} to ${cell.x}, ${cell.z}`,
-          color: playerColorRef.current,
-        }).finally(() => {
-          updateMoveSource(null);
-          setSelectedCell(null);
-        });
+        moveWholeBuilding(currentBuildingMove, cell);
       }
     }
   };
@@ -363,12 +455,23 @@ export default function App() {
   return (
     <main className="app-shell">
       <style>{styles()}</style>
-      <CityScene baseGrid={baseGrid} edits={cityEdits} players={onlinePlayers} selectedCell={selectedCell} moveSource={moveSource} onCellClick={handleCellClick} onFpsUpdate={setFps} />
+      <CityScene
+        baseGrid={baseGrid}
+        edits={cityEdits}
+        players={onlinePlayers}
+        selectedBuilding={selectedBuilding}
+        moveSource={moveSource}
+        onCellClick={handleCellClick}
+        onMoveSelected={handleMoveSelected}
+        onRemoveSelected={() => selectedBuilding && removeWholeBuilding(selectedBuilding)}
+        onCancelSelection={clearSelection}
+        onFpsUpdate={setFps}
+      />
       {disasterOverlay && <div className="disaster-overlay" style={{ background: disasterOverlay }} />}
       <StatsPanel cityStats={cityStats} weather={weather} economicData={economicData} players={players} fps={fps} cityShape={cityShape} />
       <TradePanel players={players} tradeOffers={tradeOffers} currentIdentity={currentIdentity} />
       <EventPanel cityStats={cityStats} events={events} selectedCell={selectedCell} onTriggerDisaster={handleTriggerDisaster} onClearDisaster={() => clearDisaster()} />
-      <Toolbar activeTool={activeTool} selectedCell={selectedCell} moveSource={moveSource} buildingHeight={buildingHeight} undoFeedback={undoFeedback} resetFeedback={resetFeedback} isResetting={isResetting} onToolChange={setActiveTool} onHeightChange={setBuildingHeight} onUndo={handleUndo} onFullReset={handleFullReset} />
+      <Toolbar activeTool={activeTool} selectedCell={selectedCell} moveSource={moveSource} selectedBuildingName={selectedBuilding?.name ?? null} buildingHeight={buildingHeight} undoFeedback={undoFeedback} resetFeedback={resetFeedback} isResetting={isResetting} onToolChange={setActiveTool} onHeightChange={setBuildingHeight} onUndo={handleUndo} onFullReset={handleFullReset} />
     </main>
   );
 }

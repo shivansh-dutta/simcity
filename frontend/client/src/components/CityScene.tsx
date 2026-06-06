@@ -1,21 +1,26 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { OrbitControls } from '@react-three/drei';
+import { Html, OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import VoxelGrid, { type GridCell, type VoxelGridData } from './VoxelGrid';
 import type { CityEdit, Player } from '../module_bindings/types';
+import type { BuildingFootprint } from '../utils/buildingMap';
 
 const VOXEL_SIZE = 5;
 
 type MoveSource = GridCell & { height: number };
+type SelectedBuilding = BuildingFootprint & { center: GridCell; heightLevels: number };
 
 type CitySceneProps = {
   baseGrid: VoxelGridData;
   edits: readonly CityEdit[];
   players: readonly Player[];
-  selectedCell: GridCell | null;
+  selectedBuilding: SelectedBuilding | null;
   moveSource: MoveSource | null;
   onCellClick: (cell: GridCell) => void;
+  onMoveSelected: () => void;
+  onRemoveSelected: () => void;
+  onCancelSelection: () => void;
   onFpsUpdate: (fps: number) => void;
 };
 
@@ -32,13 +37,49 @@ function PlayerCursors({ players }: { players: readonly Player[] }) {
   );
 }
 
-function CellHighlight({ cell }: { cell: GridCell | null }) {
-  if (!cell) return null;
+function BuildingHighlight({ building }: { building: SelectedBuilding | null }) {
+  if (!building) return null;
   return (
-    <mesh position={[cell.x * VOXEL_SIZE, VOXEL_SIZE * 0.55, cell.z * VOXEL_SIZE]}>
-      <boxGeometry args={[VOXEL_SIZE * 1.12, VOXEL_SIZE * 1.12, VOXEL_SIZE * 1.12]} />
-      <meshBasicMaterial color="#FFD700" wireframe transparent opacity={0.92} />
-    </mesh>
+    <group>
+      {building.cells.map(cell => (
+        <mesh key={`${cell.x}_${cell.z}`} position={[cell.x * VOXEL_SIZE, VOXEL_SIZE * 0.55, cell.z * VOXEL_SIZE]}>
+          <boxGeometry args={[VOXEL_SIZE * 1.12, VOXEL_SIZE * 1.12, VOXEL_SIZE * 1.12]} />
+          <meshBasicMaterial color="#FFD700" wireframe transparent opacity={0.92} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function BuildingInfoPanel({
+  building,
+  onMoveSelected,
+  onRemoveSelected,
+  onCancelSelection,
+}: {
+  building: SelectedBuilding | null;
+  onMoveSelected: () => void;
+  onRemoveSelected: () => void;
+  onCancelSelection: () => void;
+}) {
+  if (!building) return null;
+  const heightM = Math.round(building.heightM || building.heightLevels * VOXEL_SIZE);
+  const floors = Math.max(1, Math.round(heightM / 4));
+  const y = Math.max(building.heightLevels * VOXEL_SIZE + VOXEL_SIZE * 5, VOXEL_SIZE * 8);
+
+  return (
+    <Html position={[building.center.x * VOXEL_SIZE, y, building.center.z * VOXEL_SIZE]} center>
+      <div className="building-info-panel">
+        <strong>{building.name}</strong>
+        <span>Height: {heightM} meters</span>
+        <span>Floors: ~{floors}</span>
+        <div>
+          <button type="button" onClick={onMoveSelected}>Move</button>
+          <button type="button" onClick={onRemoveSelected}>Remove</button>
+          <button type="button" onClick={onCancelSelection}>Cancel</button>
+        </div>
+      </div>
+    </Html>
   );
 }
 
@@ -90,21 +131,24 @@ export default function CityScene({
   baseGrid,
   edits,
   players,
-  selectedCell,
+  selectedBuilding,
   moveSource,
   onCellClick,
+  onMoveSelected,
+  onRemoveSelected,
+  onCancelSelection,
   onFpsUpdate,
 }: CitySceneProps) {
   return (
-    <Canvas camera={{ position: [100, 120, 100], fov: 50 }} dpr={[0.75, 1]} gl={{ antialias: false }} style={{ height: '100vh', width: '100vw', background: '#101820' }}>
-      <color attach="background" args={['#101820']} />
-      <fog attach="fog" args={['#101820', 1150, 3600]} />
-      <ambientLight intensity={1.05} />
-      <hemisphereLight args={['#CFEFFF', '#30251A', 1.1]} />
-      <directionalLight position={[220, 340, 180]} intensity={2.1} />
+    <Canvas camera={{ position: [100, 120, 100], fov: 50, near: 0.1, far: 12000 }} dpr={[0.75, 1]} gl={{ antialias: false }} style={{ height: '100vh', width: '100vw', background: '#A9D8F2' }}>
+      <color attach="background" args={['#A9D8F2']} />
+      <ambientLight intensity={1.55} />
+      <hemisphereLight args={['#FFFFFF', '#B99B73', 1.55]} />
+      <directionalLight position={[220, 340, 180]} intensity={2.75} />
       <VoxelGrid baseGrid={baseGrid} edits={edits} onCellClick={onCellClick} />
       <PlayerCursors players={players} />
-      <CellHighlight cell={selectedCell} />
+      <BuildingHighlight building={selectedBuilding} />
+      <BuildingInfoPanel building={selectedBuilding} onMoveSelected={onMoveSelected} onRemoveSelected={onRemoveSelected} onCancelSelection={onCancelSelection} />
       <MoveBeam source={moveSource} />
       <CameraTarget baseGrid={baseGrid} />
       <FpsTracker onFpsUpdate={onFpsUpdate} />

@@ -1,25 +1,25 @@
 # HANDOFF - Urban What-If
 
 ## Last completed phase
-Phase 5 - Core Interactions plus Full Reset
+Phase 5+ - Whole-Building Selection And Footprint Edits
 
 ## What exists and works
-- frontend/client/src: Vite now serves the restored Urban What-If city app, not the starter SpacetimeDB sample.
-- SpacetimeDB Maincloud: urban-whatif was republished with resetCity/reset_city.
-- localhost:5173: browser-verified with city canvas, panels, toolbar, and no console errors.
+- frontend/client/src/utils/buildingMap.ts: builds cell-to-building and building-to-footprint maps from building_id_grid/building_gdf.
+- frontend/client/src/components/VoxelGrid.tsx: clicks include voxel type so only building voxels are interactive.
+- frontend/client/src/App.tsx: selects full building footprints and applies move/remove across all footprint cells.
+- frontend/client/src/components/CityScene.tsx: highlights full footprints and shows a readable building info panel.
 
 ## Key decisions made that differ from SPEC.md
-- None.
+- Whole-building move/remove uses existing per-cell reducers instead of adding array reducer args.
 
 ## Current known issues
-- Used `spacetime publish --module-path spacetimedb --server maincloud urban-whatif` equivalent because CLI rejects AGENTS `--maincloud`.
 - Vite still warns that the Three/R3F bundle chunk is larger than 500 kB.
 
 ## Verify the previous phase still works
 cd frontend && npm run build
 
 ## Next phase starts with
-Open two real browser tabs/devices and verify move/remove/reset sync across both clients.
+Optionally add direct search/camera focus for specific landmark testing like One World Trade Center.
 
 ##Phases Before That
-- Previous handoff: Full Reset works; two-tab visual sync still needs real browser verification.
+- Phase 5 multiplayer sync, full reset, and visual polish were completed before this session.

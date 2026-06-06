@@ -7,6 +7,7 @@ type ToolbarProps = {
   activeTool: Tool;
   selectedCell: GridCell | null;
   moveSource: MoveSource | null;
+  selectedBuildingName: string | null;
   buildingHeight: number;
   undoFeedback: string | null;
   resetFeedback: string | null;
@@ -29,6 +30,7 @@ export default function Toolbar({
   activeTool,
   selectedCell,
   moveSource,
+  selectedBuildingName,
   buildingHeight,
   undoFeedback,
   resetFeedback,
@@ -64,13 +66,14 @@ export default function Toolbar({
 
       <div className="toolbar-status">
         <span>Active: {activeTool.replace('_', ' ')}</span>
+        <span>Building: {selectedBuildingName ?? 'none selected'}</span>
         <span>Cell: {selectedCell ? `${selectedCell.x}, ${selectedCell.z}` : 'none selected'}</span>
         {activeTool === 'move' && (
           <span>
-            {moveSource ? `Drop target next. Picked ${moveSource.x}, ${moveSource.z} height ${moveSource.height}` : 'Pick a source cell first'}
+            {moveSource ? `Drop target next. Picked building height ${moveSource.height}` : 'Pick a source building first'}
           </span>
         )}
-        {activeTool === 'remove' && <span>Click a cell to remove its live height</span>}
+        {activeTool === 'remove' && <span>Click a building to remove its full footprint</span>}
         {undoFeedback && <span className="toolbar-flash">{undoFeedback}</span>}
         {resetFeedback && <span className="toolbar-flash">{resetFeedback}</span>}
       </div>
