@@ -343,6 +343,25 @@ export const undoLastEdit = spacetimedb.reducer(ctx => {
   }
 });
 
+export const resetCity = spacetimedb.reducer(ctx => {
+  const updatedAt = nowMs(ctx);
+
+  for (const edit of ctx.db.cityEdit.iter()) {
+    ctx.db.cityEdit.editId.delete(edit.editId);
+  }
+
+  for (const eventRow of ctx.db.event.iter()) {
+    ctx.db.event.eventId.delete(eventRow.eventId);
+  }
+
+  const stats = defaultStats(updatedAt);
+  if (ctx.db.cityStats.id.find(0)) {
+    ctx.db.cityStats.id.update(stats);
+  } else {
+    ctx.db.cityStats.insert(stats);
+  }
+});
+
 export const triggerDisaster = spacetimedb.reducer(
   {
     eventId: t.string(),

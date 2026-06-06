@@ -44,6 +44,7 @@ import MoveBuildingReducer from "./move_building_reducer";
 import MoveCursorReducer from "./move_cursor_reducer";
 import PlaceBuildingReducer from "./place_building_reducer";
 import RemoveBuildingReducer from "./remove_building_reducer";
+import ResetCityReducer from "./reset_city_reducer";
 import RespondToTradeReducer from "./respond_to_trade_reducer";
 import TriggerDisasterReducer from "./trigger_disaster_reducer";
 import UndoLastEditReducer from "./undo_last_edit_reducer";
@@ -157,6 +158,7 @@ const reducersSchema = __reducers(
   __reducerSchema("move_cursor", MoveCursorReducer),
   __reducerSchema("place_building", PlaceBuildingReducer),
   __reducerSchema("remove_building", RemoveBuildingReducer),
+  __reducerSchema("reset_city", ResetCityReducer),
   __reducerSchema("respond_to_trade", RespondToTradeReducer),
   __reducerSchema("trigger_disaster", TriggerDisasterReducer),
   __reducerSchema("undo_last_edit", UndoLastEditReducer),
