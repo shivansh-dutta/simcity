@@ -1,4 +1,4 @@
-# Urban What-If — Real-Time Multiplayer City Simulator
+# Sim City — Real-Time Multiplayer City Simulator
 
 A collaborative 3D city simulation built on Lower Manhattan's real voxel geometry. Multiple players edit the city simultaneously, trigger disasters, and watch AI-powered consequences ripple through live economic, population, and infrastructure metrics — all synchronized in real time via SpacetimeDB.
 
@@ -8,7 +8,7 @@ A collaborative 3D city simulation built on Lower Manhattan's real voxel geometr
 
 ## What It Does
 
-Urban What-If lets you and your collaborators reshape a real city and immediately see what happens. Place skyscrapers, rezone neighborhoods, detonate hurricanes, or crash the economy — every change propagates to everyone connected within milliseconds. An AI advisor analyzes your city's metrics and suggests improvements, while an AI-generated news ticker broadcasts disaster headlines as events unfold.
+Sim City lets you and your collaborators reshape a real city and immediately see what happens. Place skyscrapers, rezone neighborhoods, detonate hurricanes, or crash the economy — every change propagates to everyone connected within milliseconds. An AI advisor analyzes your city's metrics and suggests improvements, while an AI-generated news ticker broadcasts disaster headlines as events unfold.
 
 **Target users:** urban planners, educators, architects, industrial designers, and anyone curious about "what if we built that here?"
 
