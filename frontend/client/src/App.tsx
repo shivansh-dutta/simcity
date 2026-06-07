@@ -457,6 +457,8 @@ export default function App() {
   const joinedIdentityRef = useRef<string | null>(null);
   const moveSourceRef = useRef<MoveSource | null>(null);
   const pendingBuildingMoveRef = useRef<SelectedBuilding | null>(null);
+  const lastCursorSendRef = useRef<number>(0);
+  const prevToolRef = useRef<ToolState>(activeTool);
 
   const connectionState = useSpacetimeDB();
   const [cityEdits] = useTable(tables.cityEdit);
@@ -834,7 +836,7 @@ export default function App() {
 
     setSelectedCell({ x: cell.x, z: cell.z, voxelType: cell.voxelType });
     setSelectedBuilding(hydratedBuilding);
-    moveCursor({ x: cell.x, z: cell.z }).catch(error => console.warn('Cursor update failed:', error));
+    moveCursor({ x: cell.x, z: cell.z, isPlacingDisaster: false, disasterPreviewX: 0, disasterPreviewZ: 0, disasterPreviewRadius: 0 }).catch(error => console.warn('Cursor update failed:', error));
 
     if (activeTool === 'remove') {
       removeWholeBuilding(hydratedBuilding);
@@ -843,6 +845,29 @@ export default function App() {
       updateMoveSource({ x: hydratedBuilding.center.x, z: hydratedBuilding.center.z, height: hydratedBuilding.heightLevels });
     }
   };
+
+  const handleCellHover = useCallback((cell: GridCell | null) => {
+    setHoveredCell(cell);
+    if (!cell || activeTool !== 'trigger_disaster' || !armedDisaster) return;
+    const now = Date.now();
+    if (now - lastCursorSendRef.current < 150) return;
+    lastCursorSendRef.current = now;
+    moveCursor({
+      x: cell.x,
+      z: cell.z,
+      isPlacingDisaster: true,
+      disasterPreviewX: cell.x,
+      disasterPreviewZ: cell.z,
+      disasterPreviewRadius: armedDisaster.radius,
+    }).catch(error => console.warn('Cursor update failed:', error));
+  }, [activeTool, armedDisaster, moveCursor]);
+
+  useEffect(() => {
+    if (prevToolRef.current === 'trigger_disaster' && activeTool !== 'trigger_disaster') {
+      moveCursor({ x: 0, z: 0, isPlacingDisaster: false, disasterPreviewX: 0, disasterPreviewZ: 0, disasterPreviewRadius: 0 }).catch(console.warn);
+    }
+    prevToolRef.current = activeTool;
+  }, [activeTool, moveCursor]);
 
   const removeFireDamagedColumns = useCallback(async (event: DisasterEvent) => {
     if (!liveCity) return;
@@ -968,7 +993,8 @@ export default function App() {
         moveSource={moveSource}
         densityHeatmapEnabled={densityHeatmapEnabled}
         onCellClick={handleCellClick}
-        onCellHover={setHoveredCell}
+        currentIdentity={currentIdentity}
+        onCellHover={handleCellHover}
         onMoveSelected={handleMoveSelected}
         onRemoveSelected={() => selectedBuilding && removeWholeBuilding(selectedBuilding)}
         onCancelSelection={clearSelection}
