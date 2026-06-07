@@ -644,8 +644,8 @@ export default function App() {
     const controller = new AbortController();
     async function fetchCity() {
       try {
-        const response = await fetch(`${API_URL}/city`, { signal: controller.signal });
-        if (!response.ok) throw new Error(`FastAPI returned ${response.status}`);
+        const response = await fetch('/manhattan.json', { signal: controller.signal });
+        if (!response.ok) throw new Error(`City data returned ${response.status}`);
         const payload = (await response.json()) as CityPayload;
         const rawGrid = payload.voxcity_grid ?? payload.grid;
         if (!rawGrid) throw new Error('City payload did not include voxcity_grid');
@@ -1185,7 +1185,7 @@ No markdown, no extra text.`;
     return (
       <div className="error-screen">
         <style>{styles()}</style>
-        <div className="error-card"><h1>City data did not load</h1><p>{loadError}</p><p>Make sure FastAPI is running at {API_URL}.</p></div>
+        <div className="error-card"><h1>City data did not load</h1><p>{loadError}</p></div>
       </div>
     );
   }
