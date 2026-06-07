@@ -54,7 +54,6 @@ type CityCounts = {
 
 type DisasterEvent = Pick<Event, 'eventType' | 'intensity' | 'affectedX' | 'affectedZ' | 'radius'>;
 
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
 const PLAYER_COLOR_KEY = 'urban-whatif-player-color';
 const PLAYER_NAME_KEY = 'urban-whatif-player-name';
 
