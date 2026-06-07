@@ -3,7 +3,8 @@ import { Canvas, useFrame } from '@react-three/fiber';
 import { Html, OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import VoxelGrid, { type GridCell, type VoxelGridData } from './VoxelGrid';
-import type { CityEdit, Player } from '../module_bindings/types';
+import AgentLayer from './AgentLayer';
+import type { CityEdit, Player, SimulationClock } from '../module_bindings/types';
 import type { BuildingFootprint } from '../utils/buildingMap';
 
 const VOXEL_SIZE = 5;
@@ -18,6 +19,8 @@ type CitySceneProps = {
   selectedBuilding: SelectedBuilding | null;
   moveSource: MoveSource | null;
   ghostPreview: { x: number; z: number; width: number; depth: number } | null;
+  armedDisaster: { type: string; intensity: number; radius: number; deathToll: number; color: string } | null;
+  hoveredCell: GridCell | null;
   densityHeatmapEnabled: boolean;
   onCellClick: (cell: GridCell) => void;
   onCellHover?: (cell: GridCell | null) => void;
@@ -25,6 +28,8 @@ type CitySceneProps = {
   onRemoveSelected: () => void;
   onCancelSelection: () => void;
   onFpsUpdate: (fps: number) => void;
+  agentsVisible: boolean;
+  clock: SimulationClock | null;
 };
 
 function PlayerCursors({ players }: { players: readonly Player[] }) {
@@ -165,6 +170,8 @@ export default function CityScene({
   selectedBuilding,
   moveSource,
   ghostPreview,
+  armedDisaster,
+  hoveredCell,
   densityHeatmapEnabled,
   onCellClick,
   onCellHover,
@@ -172,6 +179,8 @@ export default function CityScene({
   onRemoveSelected,
   onCancelSelection,
   onFpsUpdate,
+  agentsVisible,
+  clock,
 }: CitySceneProps) {
   return (
     <Canvas camera={{ position: [100, 120, 100], fov: 50, near: 0.1, far: 12000 }} dpr={[0.75, 1]} gl={{ antialias: false }} style={{ height: '100vh', width: '100vw', background: '#A9D8F2' }}>
@@ -179,7 +188,8 @@ export default function CityScene({
       <ambientLight intensity={1.55} />
       <hemisphereLight args={['#FFFFFF', '#B99B73', 1.55]} />
       <directionalLight position={[220, 340, 180]} intensity={2.75} />
-      <VoxelGrid baseGrid={baseGrid} edits={edits} densityHeatmapEnabled={densityHeatmapEnabled} onCellClick={onCellClick} onCellHover={onCellHover} ghostPreview={ghostPreview} />
+      <VoxelGrid baseGrid={baseGrid} edits={edits} densityHeatmapEnabled={densityHeatmapEnabled} onCellClick={onCellClick} onCellHover={onCellHover} ghostPreview={ghostPreview} armedDisaster={armedDisaster} hoveredCell={hoveredCell} />
+      {agentsVisible && <AgentLayer clock={clock} baseGrid={baseGrid} />}
       <PlayerCursors players={players} />
       <BuildingHighlight building={selectedBuilding} />
       <BuildingInfoPanel building={selectedBuilding} onMoveSelected={onMoveSelected} onRemoveSelected={onRemoveSelected} onCancelSelection={onCancelSelection} />

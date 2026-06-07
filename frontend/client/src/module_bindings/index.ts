@@ -35,9 +35,11 @@ import {
 
 // Import all reducer arg schemas
 import AddScoreReducer from "./add_score_reducer";
+import AdvanceClockReducer from "./advance_clock_reducer";
 import ChangeZoneReducer from "./change_zone_reducer";
 import ClearDisasterReducer from "./clear_disaster_reducer";
 import CreateTradeOfferReducer from "./create_trade_offer_reducer";
+import DespawnAgentReducer from "./despawn_agent_reducer";
 import JoinCityReducer from "./join_city_reducer";
 import LeaveCityReducer from "./leave_city_reducer";
 import MoveBuildingReducer from "./move_building_reducer";
@@ -46,20 +48,30 @@ import PlaceBuildingReducer from "./place_building_reducer";
 import RemoveBuildingReducer from "./remove_building_reducer";
 import ResetCityReducer from "./reset_city_reducer";
 import RespondToTradeReducer from "./respond_to_trade_reducer";
+import SetClockSpeedReducer from "./set_clock_speed_reducer";
+import SpawnAgentsReducer from "./spawn_agents_reducer";
+import TickAgentsReducer from "./tick_agents_reducer";
+import TickDisastersReducer from "./tick_disasters_reducer";
+import TogglePauseReducer from "./toggle_pause_reducer";
 import TriggerDisasterReducer from "./trigger_disaster_reducer";
 import UndoLastEditReducer from "./undo_last_edit_reducer";
+import UpdateAgentCountReducer from "./update_agent_count_reducer";
 import UpdateCityStatsReducer from "./update_city_stats_reducer";
 import UpdateEconomicDataReducer from "./update_economic_data_reducer";
 import UpdateWeatherReducer from "./update_weather_reducer";
+import UploadSurfaceGridReducer from "./upload_surface_grid_reducer";
 
 // Import all procedure arg schemas
 
 // Import all table schema definitions
+import AgentRow from "./agent_table";
 import CityEditRow from "./city_edit_table";
 import CityStatsRow from "./city_stats_table";
 import EconomicDataRow from "./economic_data_table";
 import EventRow from "./event_table";
 import PlayerRow from "./player_table";
+import SimulationClockRow from "./simulation_clock_table";
+import SurfaceGridRow from "./surface_grid_table";
 import TradeOfferRow from "./trade_offer_table";
 import WeatherStateRow from "./weather_state_table";
 
@@ -67,6 +79,17 @@ import WeatherStateRow from "./weather_state_table";
 
 /** The schema information for all tables in this module. This is defined the same was as the tables would have been defined in the server. */
 const tablesSchema = __schema({
+  agent: __table({
+    name: 'Agent',
+    indexes: [
+      { accessor: 'agentId', name: 'Agent_agent_id_idx_btree', algorithm: 'btree', columns: [
+        'agentId',
+      ] },
+    ],
+    constraints: [
+      { name: 'Agent_agent_id_key', constraint: 'unique', columns: ['agentId'] },
+    ],
+  }, AgentRow),
   cityEdit: __table({
     name: 'CityEdit',
     indexes: [
@@ -122,6 +145,28 @@ const tablesSchema = __schema({
       { name: 'Player_identity_key', constraint: 'unique', columns: ['identity'] },
     ],
   }, PlayerRow),
+  simulationClock: __table({
+    name: 'SimulationClock',
+    indexes: [
+      { accessor: 'id', name: 'SimulationClock_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'SimulationClock_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, SimulationClockRow),
+  surfaceGrid: __table({
+    name: 'SurfaceGrid',
+    indexes: [
+      { accessor: 'id', name: 'SurfaceGrid_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'SurfaceGrid_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, SurfaceGridRow),
   tradeOffer: __table({
     name: 'TradeOffer',
     indexes: [
@@ -149,9 +194,11 @@ const tablesSchema = __schema({
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
   __reducerSchema("add_score", AddScoreReducer),
+  __reducerSchema("advance_clock", AdvanceClockReducer),
   __reducerSchema("change_zone", ChangeZoneReducer),
   __reducerSchema("clear_disaster", ClearDisasterReducer),
   __reducerSchema("create_trade_offer", CreateTradeOfferReducer),
+  __reducerSchema("despawn_agent", DespawnAgentReducer),
   __reducerSchema("join_city", JoinCityReducer),
   __reducerSchema("leave_city", LeaveCityReducer),
   __reducerSchema("move_building", MoveBuildingReducer),
@@ -160,11 +207,18 @@ const reducersSchema = __reducers(
   __reducerSchema("remove_building", RemoveBuildingReducer),
   __reducerSchema("reset_city", ResetCityReducer),
   __reducerSchema("respond_to_trade", RespondToTradeReducer),
+  __reducerSchema("set_clock_speed", SetClockSpeedReducer),
+  __reducerSchema("spawn_agents", SpawnAgentsReducer),
+  __reducerSchema("tick_agents", TickAgentsReducer),
+  __reducerSchema("tick_disasters", TickDisastersReducer),
+  __reducerSchema("toggle_pause", TogglePauseReducer),
   __reducerSchema("trigger_disaster", TriggerDisasterReducer),
   __reducerSchema("undo_last_edit", UndoLastEditReducer),
+  __reducerSchema("update_agent_count", UpdateAgentCountReducer),
   __reducerSchema("update_city_stats", UpdateCityStatsReducer),
   __reducerSchema("update_economic_data", UpdateEconomicDataReducer),
   __reducerSchema("update_weather", UpdateWeatherReducer),
+  __reducerSchema("upload_surface_grid", UploadSurfaceGridReducer),
 );
 
 /** The schema information for all procedures in this module. This is defined the same way as the procedures would have been defined in the server. */

@@ -11,12 +11,7 @@ import {
 } from "spacetimedb";
 
 export default {
-  eventId: __t.string(),
-  eventType: __t.string(),
-  intensity: __t.i32(),
-  affectedX: __t.i32(),
-  affectedZ: __t.i32(),
-  radius: __t.i32(),
-  duration: __t.i32(),
-  deathToll: __t.i32(),
+  width: __t.i32(),
+  depth: __t.i32(),
+  gridData: __t.string(),
 };

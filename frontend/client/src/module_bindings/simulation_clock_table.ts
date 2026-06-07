@@ -10,13 +10,10 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
-export default {
-  eventId: __t.string(),
-  eventType: __t.string(),
-  intensity: __t.i32(),
-  affectedX: __t.i32(),
-  affectedZ: __t.i32(),
-  radius: __t.i32(),
-  duration: __t.i32(),
-  deathToll: __t.i32(),
-};
+export default __t.row({
+  id: __t.i32().primaryKey(),
+  currentTick: __t.i64().name("current_tick"),
+  speedMultiplier: __t.f64().name("speed_multiplier"),
+  isPaused: __t.bool().name("is_paused"),
+  simulatedYear: __t.i32().name("simulated_year"),
+});

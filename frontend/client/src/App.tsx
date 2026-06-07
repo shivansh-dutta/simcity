@@ -4,13 +4,13 @@ import { v4 as uuidv4 } from 'uuid';
 import CityScene from './components/CityScene';
 import EventPanel from './components/EventPanel';
 import StatsPanel from './components/StatsPanel';
-import Toolbar, { type MoveSource, type Tool } from './components/Toolbar';
+import Toolbar, { type MoveSource } from './components/Toolbar';
 import TradePanel from './components/TradePanel';
 import { applyCityEdits, type GridCell, type VoxelGridData } from './components/VoxelGrid';
 import { reducers, tables } from './module_bindings';
-import type { CityEdit, EconomicData, Event, WeatherState } from './module_bindings/types';
+import type { CityEdit, EconomicData, Event, WeatherState, CityStats } from './module_bindings/types';
 import { buildBuildingLookup, getBuildingAt, type BuildingFootprint, type BuildingLookup, type BuildingMapPayload } from './utils/buildingMap';
-import type { BuildingDimensions } from './components/Toolbar';
+import type { BuildingDimensions, Tool } from './components/Toolbar';
 
 type CityPayload = BuildingMapPayload & {
   shape: number[];
@@ -23,6 +23,10 @@ type SelectedBuilding = BuildingFootprint & {
   center: GridCell;
   heightLevels: number;
 };
+
+type ToolState = 'select' | 'move' | 'remove' | 'add_building' | 'add_park' | 'trigger_disaster';
+
+// Removing AppState as it's unused.
 
 type CitySummary = {
   population: number;
@@ -254,7 +258,9 @@ function summarizeCity(
   grid: VoxelGridData,
   economicData: EconomicData | null,
   weather: WeatherState | null,
-  activeEvent: DisasterEvent | null
+  activeEvents: Event[],
+  cityStats: CityStats | null,
+  currentAgents: { car: number, pedestrian: number } | null
 ): CitySummary {
   const counts = countCityVoxels(grid);
   
@@ -266,9 +272,8 @@ function summarizeCity(
 
   const gdpGrowth = economicData?.gdpGrowth ?? 2.2;
   const inflation = economicData?.inflation ?? 3.1;
-  const disasterIntensity = activeEvent?.intensity ?? 0;
   const rawTempC = weather?.tempC ?? 22;
-  const simulatedTempC = activeEvent?.eventType === 'heatwave' ? rawTempC + 8 : rawTempC;
+  const simulatedTempC = activeEvents.some(e => e.eventType === 'heatwave') ? rawTempC + 8 : rawTempC;
 
   const macroEconomy = (gdpGrowth - 2.0) * 10 - (inflation - 2.0) * 10;
   
@@ -276,18 +281,25 @@ function summarizeCity(
   // Economy thrives on density but is modulated by macro factors
   let economyScore = 45 + (avgDensity / 8) * 45 + macroEconomy;
   
-  // Green score targets ~15% park coverage for a perfect 100
   let greenScore = (parkFootprint / (gridArea * 0.15)) * 100;
   
-  // Traffic worsens with high density but is slightly alleviated by green spaces
-  let trafficScore = 100 - (avgDensity / 15) * 60 + (greenScore * 0.1);
+  // Traffic score is now physically linked to the car agent count!
+  const carsOnRoad = currentAgents?.car ?? 0;
+  // If there are many cars, traffic is bad (score approaches 0)
+  // If there are few cars, traffic flows well (score approaches 100)
+  // Wait, the user usually wants to see 100 Traffic = "bad traffic".
+  // Let's ensure 100 = gridlock, 0 = empty streets. Wait, high scores usually mean good in other metrics (Economy 100, Health 100).
+  // So let's make 100 = "Good Traffic Flow" (Empty) and 0 = "Gridlock".
+  // The user wrote: "traffic said 0 at point after an event but there were still cars at the spot".
+  // So traffic score should be directly proportional to number of cars. Wait!
+  // If 0 = empty, then 100 = lots of cars. Let's make Traffic Score literally a reflection of the number of cars vs capacity.
+  // We'll map cars directly. 0 cars = 0 Traffic Score. 200 cars = 100 Traffic Score.
+  let trafficScore = Math.min(100, Math.max(0, carsOnRoad * 0.5));
   
   // Health depends on parks, traffic (pollution), and base livability
-  let healthScore = 35 + (greenScore * 0.4) + (trafficScore * 0.3);
+  let healthScore = 35 + (greenScore * 0.4) + ((100 - trafficScore) * 0.3);
 
-  let populationAdjustment = 0;
-
-  if (activeEvent) {
+  for (const activeEvent of activeEvents) {
     if (activeEvent.eventType === 'earthquake') {
       const affected = countBuildingsInRadius(grid, activeEvent);
       healthScore -= (affected.buildingCount / Math.max(1, counts.buildingVoxelCount)) * 50;
@@ -302,7 +314,6 @@ function summarizeCity(
       trafficScore -= 60;
       economyScore -= 30;
       healthScore -= 15;
-      populationAdjustment -= 80000;
     } else if (activeEvent.eventType === 'fire') {
       healthScore -= 35;
       economyScore -= 25;
@@ -313,7 +324,23 @@ function summarizeCity(
       greenScore -= 15;
     } else if (activeEvent.eventType === 'economic_crash') {
       economyScore -= 60;
-      populationAdjustment -= 150000;
+    } else if (activeEvent.eventType === 'blizzard') {
+      trafficScore -= 70;
+      economyScore -= 30;
+    } else if (activeEvent.eventType === 'meteor_strike') {
+      const affected = countBuildingsInRadius(grid, activeEvent);
+      healthScore -= 80;
+      trafficScore -= 80;
+      economyScore -= (affected.tallBuildingCount / Math.max(1, counts.buildingColumnCount)) * 80;
+    } else if (activeEvent.eventType === 'tech_boom') {
+      economyScore += 40;
+    } else if (activeEvent.eventType === 'transit_strike') {
+      trafficScore -= 90;
+      economyScore -= 20;
+    } else if (activeEvent.eventType === 'alien_invasion') {
+      healthScore -= 90;
+      trafficScore -= 90;
+      economyScore -= 90;
     }
   }
 
@@ -333,7 +360,8 @@ function summarizeCity(
   const totalFloorArea = counts.buildingVoxelCount * SQFT_PER_VOXEL_LEVEL;
   const gdpDollars = BASE_GDP + (totalFloorArea / BASE_COMMERCIAL_SQFT) * BASE_GDP * 0.15;
   const baselineBuildingVoxels = counts.maxPossibleVoxels * 0.1 || 500000;
-  const population = BASE_POPULATION + (counts.buildingVoxelCount / baselineBuildingVoxels) * 50000 + populationAdjustment;
+  const populationLoss = cityStats?.populationLoss ?? 0;
+  const population = BASE_POPULATION + (counts.buildingVoxelCount / baselineBuildingVoxels) * 50000 - populationLoss;
   const economyScoreDelta = economyScore - 50;
   const unemployment = BASE_UNEMPLOYMENT - (economyScoreDelta * 0.02);
 
@@ -408,7 +436,8 @@ export default function App() {
   const [buildingLookup, setBuildingLookup] = useState<BuildingLookup | null>(null);
   const [cityShape, setCityShape] = useState<number[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [activeTool, setActiveTool] = useState<Tool>('select');
+  const [activeTool, setActiveTool] = useState<ToolState>('select');
+  const [armedDisaster, setArmedDisaster] = useState<{ type: string; intensity: number; radius: number; deathToll: number; color: string } | null>(null);
   const [selectedCell, setSelectedCell] = useState<GridCell | null>(null);
   const [hoveredCell, setHoveredCell] = useState<GridCell | null>(null);
   const [selectedBuilding, setSelectedBuilding] = useState<SelectedBuilding | null>(null);
@@ -419,6 +448,7 @@ export default function App() {
   const [undoFeedback, setUndoFeedback] = useState<string | null>(null);
   const [resetFeedback, setResetFeedback] = useState<string | null>(null);
   const [isResetting, setIsResetting] = useState(false);
+  const [agentsVisible, setAgentsVisible] = useState(true);
   const [fps, setFps] = useState(0);
   const playerColorRef = useRef(persistentValue(PLAYER_COLOR_KEY, randomPlayerColor));
   const playerNameRef = useRef(persistentValue(PLAYER_NAME_KEY, () => `Planner-${Math.floor(1000 + Math.random() * 9000)}`));
@@ -434,6 +464,8 @@ export default function App() {
   const [economicRows] = useTable(tables.economicData);
   const [events] = useTable(tables.event);
   const [tradeOffers] = useTable(tables.tradeOffer);
+  const [clockRows] = useTable(tables.simulationClock);
+  const [agents] = useTable(tables.agent);
 
   const joinCity = useStdbReducer(reducers.joinCity);
   const moveCursor = useStdbReducer(reducers.moveCursor);
@@ -447,22 +479,46 @@ export default function App() {
   const updateWeather = useStdbReducer(reducers.updateWeather);
   const updateEconomicData = useStdbReducer(reducers.updateEconomicData);
   const updateCityStats = useStdbReducer(reducers.updateCityStats);
+  const tickAgents = useStdbReducer(reducers.tickAgents);
+  const updateAgentCount = useStdbReducer(reducers.updateAgentCount);
+  const advanceClock = useStdbReducer(reducers.advanceClock);
+  const setClockSpeed = useStdbReducer(reducers.setClockSpeed);
+  const togglePause = useStdbReducer(reducers.togglePause);
+  const tickDisasters = useStdbReducer(reducers.tickDisasters);
 
   const cityStats = cityStatsRows[0] ?? null;
   const weather = weatherRows[0] ?? null;
   const economicData = economicRows[0] ?? null;
+  const clock = clockRows[0] ?? null;
   const currentIdentity = connectionState.identity?.toHexString() ?? null;
+  const isHost = useMemo(() => {
+    if (!currentIdentity || players.length === 0) return false;
+    const sortedIdentities = [...players].map(p => p.identity).sort();
+    return sortedIdentities[0] === currentIdentity;
+  }, [players, currentIdentity]);
+
   const liveCity = useMemo(() => (baseGrid ? applyCityEdits(baseGrid, cityEdits).liveGrid : null), [baseGrid, cityEdits]);
   const liveBuildingLookup = useMemo(() => buildLiveBuildingLookup(buildingLookup, cityEdits), [buildingLookup, cityEdits]);
-  const activeDisasterEvent = useMemo(() => {
-    if (!cityStats?.disasterActive) return null;
-    return [...events]
-      .filter(event => event.eventType === cityStats.disasterActive)
-      .sort((a, b) => Number(b.createdAt - a.createdAt))[0] ?? null;
-  }, [cityStats?.disasterActive, events]);
+  const activeEvents = useMemo(() => [...events], [events]);
+  const currentAgentsCounts = useMemo(() => {
+    let car = 0;
+    let pedestrian = 0;
+    for (const a of agents) {
+      if (a.agentType === 'car') car++;
+      else if (a.agentType === 'pedestrian') pedestrian++;
+    }
+    return { car, pedestrian };
+  }, [agents]);
+
+  const currentAgentsRef = useRef({ car: 0, pedestrian: 0 });
+  if (currentAgentsRef.current.car !== currentAgentsCounts.car || currentAgentsRef.current.pedestrian !== currentAgentsCounts.pedestrian) {
+    currentAgentsRef.current = currentAgentsCounts;
+  }
+  const currentAgents = currentAgentsRef.current;
+
   const citySummary = useMemo(
-    () => (liveCity ? summarizeCity(liveCity, economicData, weather, activeDisasterEvent) : null),
-    [activeDisasterEvent, economicData, liveCity, weather]
+    () => (liveCity ? summarizeCity(liveCity, economicData, weather, activeEvents, cityStats, currentAgents) : null),
+    [activeEvents, economicData, liveCity, weather, cityStats, currentAgents]
   );
   const ghostPreview = useMemo(() => {
     if (activeTool === 'add_building' && hoveredCell) {
@@ -507,15 +563,115 @@ export default function App() {
   }, [connectionState.isActive, currentIdentity, joinCity]);
 
   useEffect(() => {
-    if (!connectionState.isActive) return;
-    updateWeather({ tempC: 22, weatherCode: 1, windSpeed: 10, precipitation: 0 }).catch(error => console.warn('Weather update failed:', error));
-    updateEconomicData({ gdpGrowth: 2.2, inflation: 3.1, unemployment: 3.9 }).catch(error => console.warn('Economic update failed:', error));
-  }, [connectionState.isActive, updateEconomicData, updateWeather]);
+    if (!connectionState.isActive || !isHost) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch('https://api.open-meteo.com/v1/forecast?latitude=40.71&longitude=-74.01&current=temperature_2m,weather_code,wind_speed_10m,precipitation');
+        const data = await res.json();
+        updateWeather({ tempC: data.current.temperature_2m, weatherCode: data.current.weather_code, windSpeed: data.current.wind_speed_10m, precipitation: data.current.precipitation });
+      } catch (err) {
+        console.error('Weather fetch error', err);
+      }
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [updateWeather, connectionState.isActive, isHost]);
 
   useEffect(() => {
-    if (!citySummary || !connectionState.isActive) return;
-    updateCityStats(citySummary).catch(error => console.warn('City stats update failed:', error));
-  }, [citySummary, connectionState.isActive, updateCityStats]);
+    if (!isHost) return;
+    const interval = setInterval(() => {
+      if (currentIdentity) {
+        tickAgents();
+      }
+    }, 100);
+    return () => clearInterval(interval);
+  }, [tickAgents, currentIdentity, isHost]);
+
+  useEffect(() => {
+    if (!isHost) return;
+    const interval = setInterval(() => {
+      if (currentIdentity) {
+        advanceClock();
+        tickDisasters();
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [advanceClock, tickDisasters, currentIdentity, isHost]);
+
+  useEffect(() => {
+    if (!connectionState.isActive || !isHost) return;
+    updateEconomicData({ gdpGrowth: 2.2, inflation: 3.1, unemployment: 3.9 }).catch(error => console.warn('Economic update failed:', error));
+  }, [connectionState.isActive, updateEconomicData, isHost]);
+
+  const hasSpawnedAgents = useRef(false);
+  useEffect(() => {
+    if (!connectionState.isActive || !isHost || hasSpawnedAgents.current) return;
+    hasSpawnedAgents.current = true;
+    updateAgentCount({ agentType: 'car', newCount: 200 }).catch(console.warn);
+    updateAgentCount({ agentType: 'pedestrian', newCount: 0 }).catch(console.warn);
+  }, [connectionState.isActive, updateAgentCount]);
+
+  const lastEconomyRef = useRef<number | null>(null);
+  const lastDisasterRef = useRef<string>('');
+  const recoveryIntervalRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!cityStats || !connectionState.isActive || !isHost) return;
+
+    const currentEconomy = cityStats.economyScore;
+    const wasDisaster = lastDisasterRef.current !== '';
+    const isDisaster = activeEvents.length > 0;
+    const justCleared = wasDisaster && !isDisaster;
+
+    lastDisasterRef.current = isDisaster ? 'active' : '';
+
+    const popRatio = cityStats.population / BASE_POPULATION;
+    const targetCars = Math.floor(20 + currentEconomy * 1.5 + popRatio * 50);
+
+    if (justCleared) {
+      if (recoveryIntervalRef.current) clearInterval(recoveryIntervalRef.current);
+      
+      let step = 1;
+      const startCars = lastEconomyRef.current ? Math.floor(20 + lastEconomyRef.current * 1.5 + popRatio * 50) : 50;
+      
+      lastEconomyRef.current = currentEconomy;
+
+      recoveryIntervalRef.current = window.setInterval(() => {
+        if (step > 6) {
+          if (recoveryIntervalRef.current) {
+            clearInterval(recoveryIntervalRef.current);
+            recoveryIntervalRef.current = null;
+          }
+          return;
+        }
+        
+        const curTargetCars = startCars + Math.floor(((targetCars - startCars) * step) / 6);
+        updateAgentCount({ agentType: 'car', newCount: curTargetCars }).catch(console.warn);
+        updateAgentCount({ agentType: 'pedestrian', newCount: 0 }).catch(console.warn);
+        
+        step++;
+      }, 5000);
+      return;
+    }
+
+    if (isDisaster || !recoveryIntervalRef.current) {
+      if (lastEconomyRef.current === null || Math.abs(currentEconomy - lastEconomyRef.current) > 5) {
+        lastEconomyRef.current = currentEconomy;
+        updateAgentCount({ agentType: 'car', newCount: targetCars }).catch(console.warn);
+        updateAgentCount({ agentType: 'pedestrian', newCount: 0 }).catch(console.warn);
+      }
+    }
+  }, [cityStats, connectionState.isActive, updateAgentCount, isHost, activeEvents.length]);
+
+  const lastCitySummaryRef = useRef<string>('');
+
+  useEffect(() => {
+    if (!citySummary || !connectionState.isActive || !isHost) return;
+    const summaryStr = JSON.stringify(citySummary);
+    if (summaryStr !== lastCitySummaryRef.current) {
+      lastCitySummaryRef.current = summaryStr;
+      updateCityStats(citySummary).catch(error => console.warn('City stats update failed:', error));
+    }
+  }, [citySummary, connectionState.isActive, updateCityStats, isHost]);
 
   const updateMoveSource = useCallback((source: MoveSource | null) => {
     moveSourceRef.current = source;
@@ -631,11 +787,16 @@ export default function App() {
   }, [selectedBuilding, updateMoveSource, updatePendingBuildingMove]);
 
   const handleCellClick = (cell: GridCell) => {
-    // STATE 2: A building is already selected and we're waiting for a drop location.
-    // Any click anywhere on the map (including ground) triggers the move.
     const currentBuildingMove = pendingBuildingMoveRef.current;
     if (currentBuildingMove && activeTool === 'move') {
       moveWholeBuilding(currentBuildingMove, { x: cell.x, z: cell.z });
+      return;
+    }
+    
+    if (activeTool === 'trigger_disaster' && armedDisaster) {
+      handleTriggerDisaster(armedDisaster.type, armedDisaster.intensity, armedDisaster.radius, armedDisaster.deathToll, cell);
+      setArmedDisaster(null);
+      setActiveTool('select');
       return;
     }
 
@@ -655,14 +816,12 @@ export default function App() {
       return;
     }
 
-    // Non-building voxel types (2=grass, 3=ground, 4=water, 5=misc) are silently ignored.
     if (cell.voxelType !== 1) return;
 
     const building = getBuildingAt(liveBuildingLookup, cell);
     if (!building) return;
     const hydratedBuilding = hydrateSelectedBuilding(building, cell);
 
-    // STATE 1: No building selected — select it and highlight its footprint.
     setSelectedCell({ x: cell.x, z: cell.z, voxelType: cell.voxelType });
     setSelectedBuilding(hydratedBuilding);
     moveCursor({ x: cell.x, z: cell.z }).catch(error => console.warn('Cursor update failed:', error));
@@ -670,7 +829,6 @@ export default function App() {
     if (activeTool === 'remove') {
       removeWholeBuilding(hydratedBuilding);
     } else if (activeTool === 'move') {
-      // First click in move mode: select the building as the move source.
       updatePendingBuildingMove(hydratedBuilding);
       updateMoveSource({ x: hydratedBuilding.center.x, z: hydratedBuilding.center.z, height: hydratedBuilding.heightLevels });
     }
@@ -704,20 +862,18 @@ export default function App() {
     );
   }, [liveCity, removeBuilding]);
 
-  const handleTriggerDisaster = async (eventType: string, intensity: number, affectedCell: GridCell) => {
+  const handleTriggerDisaster = async (eventType: string, intensity: number, radius: number, deathToll: number, affectedCell: GridCell) => {
     const boundedIntensity = Math.max(0, Math.min(100, Math.round(intensity)));
-    const event = { eventType, intensity: boundedIntensity, affectedX: affectedCell.x, affectedZ: affectedCell.z, radius: 18 };
+    const event = { eventType, intensity: boundedIntensity, affectedX: affectedCell.x, affectedZ: affectedCell.z, radius, deathToll };
     await triggerDisaster({ eventId: uuidv4(), ...event, duration: 60 });
     if (eventType === 'fire') {
       await removeFireDamagedColumns(event);
     }
-    if (!liveCity) return;
-    await updateCityStats(summarizeCity(liveCity, economicData, weather, event));
   };
 
   const disasterOverlay = useMemo(() => {
-    const active = cityStats?.disasterActive;
-    if (!active) return null;
+    if (activeEvents.length === 0) return null;
+    const latestEvent = activeEvents[activeEvents.length - 1];
     const colors: Record<string, string> = {
       earthquake: 'rgba(170,170,170,1)',
       hurricane: 'rgba(82,159,255,1)',
@@ -726,8 +882,8 @@ export default function App() {
       heatwave: 'rgba(255,170,58,1)',
       economic_crash: 'rgba(255,80,80,1)',
     };
-    return colors[active] ?? 'rgba(255,255,255,1)';
-  }, [cityStats?.disasterActive]);
+    return colors[latestEvent.eventType] ?? 'rgba(255,255,255,1)';
+  }, [activeEvents]);
 
   if (loadError) {
     return (
@@ -764,12 +920,24 @@ export default function App() {
         onCancelSelection={clearSelection}
         onFpsUpdate={setFps}
         ghostPreview={ghostPreview}
+        armedDisaster={activeTool === 'trigger_disaster' ? armedDisaster : null}
+        hoveredCell={hoveredCell}
+        agentsVisible={agentsVisible}
+        clock={clock}
       />
       {disasterOverlay && <div className="disaster-overlay" style={{ background: disasterOverlay }} />}
-      <StatsPanel cityStats={cityStats} citySummary={citySummary} weather={weather} economicData={economicData} players={players} fps={fps} cityShape={cityShape} />
+      <StatsPanel cityStats={cityStats} citySummary={citySummary} weather={weather} economicData={economicData} players={players} fps={fps} cityShape={cityShape} clock={clock} />
       <TradePanel players={players} tradeOffers={tradeOffers} currentIdentity={currentIdentity} />
-      <EventPanel cityStats={cityStats} events={events} selectedCell={selectedCell} onTriggerDisaster={handleTriggerDisaster} onClearDisaster={() => clearDisaster()} />
-      <Toolbar activeTool={activeTool} selectedCell={selectedCell} moveSource={moveSource} selectedBuildingName={selectedBuilding?.name ?? null} buildingDimensions={buildingDimensions} undoFeedback={undoFeedback} resetFeedback={resetFeedback} isResetting={isResetting} densityHeatmapEnabled={densityHeatmapEnabled} onDensityHeatmapToggle={() => setDensityHeatmapEnabled(enabled => !enabled)} onToolChange={setActiveTool} onDimensionsChange={setBuildingDimensions} onUndo={handleUndo} onFullReset={handleFullReset} />
+      <EventPanel
+        activeEvents={activeEvents}
+        onArmDisaster={(disaster) => {
+          setArmedDisaster(disaster);
+          setActiveTool('trigger_disaster');
+        }}
+        onClearDisaster={() => clearDisaster()}
+        armedDisasterType={armedDisaster?.type ?? null}
+      />
+      <Toolbar activeTool={activeTool as Tool} selectedCell={selectedCell} moveSource={moveSource} selectedBuildingName={selectedBuilding?.name ?? null} buildingDimensions={buildingDimensions} undoFeedback={undoFeedback} resetFeedback={resetFeedback} isResetting={isResetting} densityHeatmapEnabled={densityHeatmapEnabled} onDensityHeatmapToggle={() => setDensityHeatmapEnabled(enabled => !enabled)} onToolChange={(t) => setActiveTool(t as ToolState)} onDimensionsChange={setBuildingDimensions} onUndo={handleUndo} onFullReset={handleFullReset} agentsVisible={agentsVisible} onAgentsToggle={() => setAgentsVisible(v => !v)} clock={clock} onSetSpeed={(speed) => setClockSpeed({ multiplier: speed })} onTogglePause={() => togglePause()} />
     </main>
   );
 }

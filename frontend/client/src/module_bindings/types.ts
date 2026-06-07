@@ -10,6 +10,20 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
+export const Agent = __t.object("Agent", {
+  agentId: __t.string(),
+  agentType: __t.string(),
+  x: __t.f64(),
+  z: __t.f64(),
+  targetX: __t.f64(),
+  targetZ: __t.f64(),
+  speed: __t.f64(),
+  state: __t.string(),
+  color: __t.string(),
+  spawnedAt: __t.i64(),
+});
+export type Agent = __Infer<typeof Agent>;
+
 export const CityEdit = __t.object("CityEdit", {
   editId: __t.string(),
   editType: __t.string(),
@@ -37,6 +51,7 @@ export const CityStats = __t.object("CityStats", {
   greenScore: __t.f64(),
   disasterActive: __t.string(),
   disasterIntensity: __t.i32(),
+  populationLoss: __t.i32(),
   lastUpdated: __t.i64(),
 });
 export type CityStats = __Infer<typeof CityStats>;
@@ -76,6 +91,23 @@ export const Player = __t.object("Player", {
   lastSeen: __t.i64(),
 });
 export type Player = __Infer<typeof Player>;
+
+export const SimulationClock = __t.object("SimulationClock", {
+  id: __t.i32(),
+  currentTick: __t.i64(),
+  speedMultiplier: __t.f64(),
+  isPaused: __t.bool(),
+  simulatedYear: __t.i32(),
+});
+export type SimulationClock = __Infer<typeof SimulationClock>;
+
+export const SurfaceGrid = __t.object("SurfaceGrid", {
+  id: __t.i32(),
+  width: __t.i32(),
+  depth: __t.i32(),
+  gridData: __t.string(),
+});
+export type SurfaceGrid = __Infer<typeof SurfaceGrid>;
 
 export const TradeOffer = __t.object("TradeOffer", {
   offerId: __t.string(),

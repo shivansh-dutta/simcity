@@ -28,6 +28,8 @@ type VoxelGridProps = {
   onCellClick: (cell: GridCell) => void;
   onCellHover?: (cell: GridCell | null) => void;
   ghostPreview?: { x: number; z: number; width: number; depth: number } | null;
+  armedDisaster?: { type: string; intensity: number; radius: number; deathToll: number; color: string } | null;
+  hoveredCell?: GridCell | null;
 };
 
 type HoveredDensity = GridCell & { count: number };
@@ -618,7 +620,22 @@ function GhostPreviewMesh({ preview }: { preview: { x: number; z: number; width:
   );
 }
 
-export default function VoxelGrid({ baseGrid, edits, densityHeatmapEnabled, ghostPreview, onCellClick, onCellHover }: VoxelGridProps) {
+function EventRadiusPreviewMesh({ disaster, cell }: { disaster: { type: string; radius: number; color: string } | null, cell: GridCell | null }) {
+  if (!disaster || !cell) return null;
+  
+  const centerX = cell.x * VOXEL_SIZE;
+  const centerZ = cell.z * VOXEL_SIZE;
+  const radiusUnits = disaster.radius * VOXEL_SIZE;
+  
+  return (
+    <mesh position={[centerX, 0, centerZ]}>
+      <cylinderGeometry args={[radiusUnits, radiusUnits, VOXEL_SIZE * 40, 32]} />
+      <meshBasicMaterial color={disaster.color} transparent opacity={0.3} depthWrite={false} side={THREE.DoubleSide} />
+    </mesh>
+  );
+}
+
+export default function VoxelGrid({ baseGrid, edits, densityHeatmapEnabled, ghostPreview, armedDisaster, hoveredCell: externalHoveredCell, onCellClick, onCellHover }: VoxelGridProps) {
   const { liveGrid } = useMemo(() => applyCityEdits(baseGrid, edits), [baseGrid, edits]);
   const voxelGroups = useMemo(() => groupVoxels(liveGrid), [liveGrid]);
   const groundInstances = useMemo(() => voxelGroups.find(group => group.voxelType === 3)?.instances ?? [], [voxelGroups]);
@@ -671,6 +688,7 @@ export default function VoxelGrid({ baseGrid, edits, densityHeatmapEnabled, ghos
         />
       ))}
       <GhostPreviewMesh preview={ghostPreview ?? null} />
+      <EventRadiusPreviewMesh disaster={armedDisaster ?? null} cell={externalHoveredCell ?? null} />
       {densityHeatmapEnabled && hoveredDensity && (
         <Html position={[hoveredDensity.x * VOXEL_SIZE, VOXEL_SIZE * 3, hoveredDensity.z * VOXEL_SIZE]} center>
           <div className="density-label">Density: {hoveredDensity.count} buildings nearby</div>

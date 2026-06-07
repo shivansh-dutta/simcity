@@ -20,5 +20,6 @@ export default __t.row({
   greenScore: __t.f64().name("green_score"),
   disasterActive: __t.string().name("disaster_active"),
   disasterIntensity: __t.i32().name("disaster_intensity"),
+  populationLoss: __t.i32().name("population_loss"),
   lastUpdated: __t.i64().name("last_updated"),
 });

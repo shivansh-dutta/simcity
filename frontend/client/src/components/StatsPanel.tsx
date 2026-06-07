@@ -1,4 +1,4 @@
-import type { CityStats, EconomicData, Player, WeatherState } from '../module_bindings/types';
+import type { CityStats, EconomicData, Player, WeatherState, SimulationClock } from '../module_bindings/types';
 
 type StatsPanelProps = {
   cityStats: CityStats | null;
@@ -8,6 +8,7 @@ type StatsPanelProps = {
   players: readonly Player[];
   fps: number;
   cityShape: number[] | null;
+  clock: SimulationClock | null;
 };
 
 function scoreClass(value: number) {
@@ -26,23 +27,34 @@ function ScoreRow({ label, value }: { label: string; value: number }) {
   );
 }
 
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
 function formatDollars(value: number) {
   if (value >= 1e9) return `$${(value / 1e9).toFixed(1)}B`;
   if (value >= 1e6) return `$${(value / 1e6).toFixed(1)}M`;
   return `$${value.toLocaleString()}`;
 }
 
-export default function StatsPanel({ cityStats, citySummary, weather, economicData, players, fps, cityShape }: StatsPanelProps) {
+export default function StatsPanel({ cityStats, citySummary, weather, economicData, players, fps, cityShape, clock }: StatsPanelProps) {
   const onlinePlayers = players.filter(player => player.isOnline);
 
   // We use cityStats for scores because it is the authoritative SpacetimeDB state,
   // but we can use citySummary for the real economic numbers (GDP, unemployment)
   // because they are deterministically derived from the synced city grid.
   const population = cityStats?.population ?? citySummary?.population ?? 0;
+  
+  let formattedDate = '...';
+  if (clock) {
+    const monthIndex = Math.floor(Number(clock.currentTick) / 720) % 12;
+    formattedDate = `${MONTH_NAMES[monthIndex]} ${clock.simulatedYear}`;
+  }
 
   return (
     <aside className="panel stats-panel">
-      <h2>City Metrics</h2>
+      <div className="panel-header">
+        <h2>City Metrics</h2>
+        <div className="simulation-date">{formattedDate}</div>
+      </div>
       <div className="metric-hero">
         <span>Population</span>
         <strong>{population.toLocaleString()}</strong>

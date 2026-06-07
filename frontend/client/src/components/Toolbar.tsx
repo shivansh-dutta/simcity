@@ -1,4 +1,5 @@
 import type { GridCell } from './VoxelGrid';
+import type { SimulationClock } from '../module_bindings/types';
 
 export type Tool = 'select' | 'move' | 'remove' | 'add_building' | 'add_park';
 export type MoveSource = GridCell & { height: number };
@@ -19,6 +20,11 @@ type ToolbarProps = {
   onDimensionsChange: (dimensions: BuildingDimensions) => void;
   onUndo: () => void;
   onFullReset: () => void;
+  agentsVisible: boolean;
+  onAgentsToggle: () => void;
+  clock: SimulationClock | null;
+  onSetSpeed: (speed: number) => void;
+  onTogglePause: () => void;
 };
 
 const TOOLS: { id: Tool; label: string }[] = [
@@ -44,7 +50,15 @@ export default function Toolbar({
   onDimensionsChange,
   onUndo,
   onFullReset,
+  agentsVisible,
+  onAgentsToggle,
+  clock,
+  onSetSpeed,
+  onTogglePause,
 }: ToolbarProps) {
+  const isPaused = clock?.isPaused ?? false;
+  const currentSpeed = clock?.speedMultiplier ?? 1;
+
   return (
     <section className="toolbar">
       <div className="tool-row">
@@ -62,6 +76,20 @@ export default function Toolbar({
         <button className={densityHeatmapEnabled ? 'active' : ''} type="button" onClick={onDensityHeatmapToggle}>
           🌡️ Density
         </button>
+        <button className={agentsVisible ? 'active' : ''} type="button" onClick={onAgentsToggle}>
+          👥 Agents
+        </button>
+      </div>
+
+      <div className="playback-controls tool-row">
+        <button type="button" className={isPaused ? 'active' : ''} onClick={onTogglePause}>
+          {isPaused ? '▶ Play' : '⏸ Pause'}
+        </button>
+        {[1, 10, 60, 720].map(speed => (
+          <button key={speed} className={currentSpeed === speed && !isPaused ? 'active' : ''} type="button" onClick={() => onSetSpeed(speed)}>
+            {speed}x
+          </button>
+        ))}
       </div>
 
       {activeTool === 'add_building' && (
