@@ -389,45 +389,8 @@ export const triggerDisaster = spacetimedb.reducer(
 
     const existing = ctx.db.cityStats.id.find(0);
     const current = existing ?? defaultStats(createdAt);
-    let population = current.population;
-    let happiness = current.happiness;
-    let economyScore = current.economyScore;
-    let healthScore = current.healthScore;
-    let trafficScore = current.trafficScore;
-    let greenScore = current.greenScore;
-
-    if (eventType === 'earthquake') {
-      healthScore -= 40;
-      trafficScore -= 30;
-      economyScore -= 20;
-    } else if (eventType === 'hurricane') {
-      healthScore -= 30;
-      greenScore -= 40;
-      trafficScore -= 50;
-    } else if (eventType === 'flood') {
-      trafficScore -= 60;
-      economyScore -= 30;
-      population -= 100000;
-    } else if (eventType === 'fire') {
-      healthScore -= 20;
-      economyScore -= 40;
-    } else if (eventType === 'heatwave') {
-      healthScore -= 20;
-      happiness -= 15;
-      greenScore -= 10;
-    } else if (eventType === 'economic_crash') {
-      economyScore -= 50;
-      population -= 200000;
-    }
-
     const next = {
       ...current,
-      population: Math.max(0, population),
-      happiness: clampScore(happiness),
-      economyScore: clampScore(economyScore),
-      healthScore: clampScore(healthScore),
-      trafficScore: clampScore(trafficScore),
-      greenScore: clampScore(greenScore),
       disasterActive: eventType,
       disasterIntensity: intensity,
       lastUpdated: createdAt,

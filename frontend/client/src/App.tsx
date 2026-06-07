@@ -8,8 +8,9 @@ import Toolbar, { type MoveSource, type Tool } from './components/Toolbar';
 import TradePanel from './components/TradePanel';
 import { applyCityEdits, type GridCell, type VoxelGridData } from './components/VoxelGrid';
 import { reducers, tables } from './module_bindings';
-import type { EconomicData } from './module_bindings/types';
+import type { CityEdit, EconomicData, Event, WeatherState } from './module_bindings/types';
 import { buildBuildingLookup, getBuildingAt, type BuildingFootprint, type BuildingLookup, type BuildingMapPayload } from './utils/buildingMap';
+import type { BuildingDimensions } from './components/Toolbar';
 
 type CityPayload = BuildingMapPayload & {
   shape: number[];
@@ -30,11 +31,32 @@ type CitySummary = {
   healthScore: number;
   trafficScore: number;
   greenScore: number;
+  gdpDollars: number;
+  unemployment: number;
 };
+
+type CityCounts = {
+  totalVoxels: number;
+  totalBuildings: number;
+  buildingVoxelCount: number;
+  buildingColumnCount: number;
+  tallBuildingCount: number;
+  treeCount: number;
+  lowElevationVoxelCount: number;
+  maxPossibleVoxels: number;
+};
+
+type DisasterEvent = Pick<Event, 'eventType' | 'intensity' | 'affectedX' | 'affectedZ' | 'radius'>;
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
 const PLAYER_COLOR_KEY = 'urban-whatif-player-color';
 const PLAYER_NAME_KEY = 'urban-whatif-player-name';
+
+const BASE_GDP = 770_000_000_000;
+const BASE_POPULATION = 1_600_000;
+const BASE_UNEMPLOYMENT = 3.9;
+const BASE_COMMERCIAL_SQFT = 500_000_000;
+const SQFT_PER_VOXEL_LEVEL = 269;
 
 function randomPlayerColor(): string {
   const colors = ['#FF7A59', '#46D9A8', '#5AB8FF', '#F4D35E', '#F9578E', '#A7F070'];
@@ -47,6 +69,60 @@ function persistentValue(key: string, fallback: () => string): string {
   const next = fallback();
   localStorage.setItem(key, next);
   return next;
+}
+
+function cellKey(x: number, z: number): string {
+  return `${x}_${z}`;
+}
+
+function buildLiveBuildingLookup(
+  baseLookup: BuildingLookup | null,
+  edits: readonly CityEdit[]
+): BuildingLookup | null {
+  if (!baseLookup) return null;
+  if (edits.length === 0) return baseLookup;
+
+  const cellToBuildingId = new Map(baseLookup.cellToBuildingId);
+  const buildingsById = new Map<string, BuildingFootprint>();
+  for (const [id, building] of baseLookup.buildingsById) {
+    buildingsById.set(id, { ...building, cells: building.cells.map(c => ({ ...c })) });
+  }
+
+  const orderedEdits = [...edits].sort((a, b) => Number(a.createdAt - b.createdAt));
+
+  for (const edit of orderedEdits) {
+    if (edit.editType === 'remove') {
+      const fromKey = cellKey(edit.fromX, edit.fromZ);
+      const buildingId = cellToBuildingId.get(fromKey);
+      if (buildingId) {
+        cellToBuildingId.delete(fromKey);
+        const building = buildingsById.get(buildingId);
+        if (building) {
+          building.cells = building.cells.filter(c => !(c.x === edit.fromX && c.z === edit.fromZ));
+          if (building.cells.length === 0) buildingsById.delete(buildingId);
+        }
+      }
+    } else if (edit.editType === 'move') {
+      const fromKey = cellKey(edit.fromX, edit.fromZ);
+      const toKey = cellKey(edit.toX, edit.toZ);
+      const buildingId = cellToBuildingId.get(fromKey);
+      if (buildingId) {
+        cellToBuildingId.delete(fromKey);
+        cellToBuildingId.set(toKey, buildingId);
+        const building = buildingsById.get(buildingId);
+        if (building) {
+          const idx = building.cells.findIndex(c => c.x === edit.fromX && c.z === edit.fromZ);
+          if (idx >= 0) {
+            building.cells[idx] = { x: edit.toX, z: edit.toZ };
+          } else {
+            building.cells.push({ x: edit.toX, z: edit.toZ });
+          }
+        }
+      }
+    }
+  }
+
+  return { cellToBuildingId, buildingsById };
 }
 
 function normalizeVoxelCode(value: number): number {
@@ -86,46 +162,190 @@ function clampScore(value: number): number {
   return Math.max(0, Math.min(100, value));
 }
 
-function summarizeCity(grid: VoxelGridData, economicData: EconomicData | null, disasterIntensity: number): CitySummary {
-  let nonAir = 0;
-  let green = 0;
-  let buildingColumns = 0;
-  let tallBuildings = 0;
-  let skyscraperColumns = 0;
+function countCityVoxels(grid: VoxelGridData): CityCounts {
+  let totalVoxels = 0;
+  let totalBuildings = 0;
+  let buildingVoxelCount = 0;
+  let buildingColumnCount = 0;
+  let tallBuildingCount = 0;
+  let treeCount = 0;
+  let lowElevationVoxelCount = 0;
+  let maxLevels = 1;
 
   for (let row = 0; row < grid.length; row += 1) {
     for (let col = 0; col < grid[row].length; col += 1) {
       let buildingHeight = 0;
-      for (const voxelType of grid[row][col]) {
+      maxLevels = Math.max(maxLevels, grid[row][col].length);
+      for (let level = 0; level < grid[row][col].length; level += 1) {
+        const voxelType = grid[row][col][level];
         if (voxelType === 0) continue;
-        nonAir += 1;
-        if (voxelType === 2) green += 1;
-        if (voxelType === 1) buildingHeight += 1;
+        totalVoxels += 1;
+        if (level < 3) lowElevationVoxelCount += 1;
+        if (voxelType === 2) treeCount += 1;
+        if (voxelType === 1) {
+          buildingHeight += 1;
+          buildingVoxelCount += 1;
+        }
       }
       if (buildingHeight > 0) {
-        buildingColumns += 1;
-        if (buildingHeight > 10) tallBuildings += 1;
-        if (buildingHeight > 15) skyscraperColumns += 1;
+        totalBuildings += 1;
+        buildingColumnCount += 1;
+        if (buildingHeight > 10) tallBuildingCount += 1;
       }
     }
   }
 
+  return {
+    totalVoxels,
+    totalBuildings,
+    buildingVoxelCount,
+    buildingColumnCount,
+    tallBuildingCount,
+    treeCount,
+    lowElevationVoxelCount,
+    maxPossibleVoxels: grid.length * (grid[0]?.length ?? 0) * maxLevels,
+  };
+}
+
+function countBuildingsInRadius(grid: VoxelGridData, event: DisasterEvent) {
+  let buildingCount = 0;
+  let tallBuildingCount = 0;
+  const radiusSquared = event.radius * event.radius;
+
+  for (let row = 0; row < grid.length; row += 1) {
+    for (let col = 0; col < grid[row].length; col += 1) {
+      const dx = row - event.affectedX;
+      const dz = col - event.affectedZ;
+      if (dx * dx + dz * dz > radiusSquared) continue;
+      let height = 0;
+      for (const voxelType of grid[row][col]) {
+        if (voxelType === 1) height += 1;
+      }
+      if (height > 0) {
+        buildingCount += height;
+        if (height > 10) tallBuildingCount += 1;
+      }
+    }
+  }
+
+  return { buildingCount, tallBuildingCount };
+}
+
+function getAffectedBuildingColumns(grid: VoxelGridData, event: DisasterEvent) {
+  const columns: Array<GridCell & { height: number }> = [];
+  const radiusSquared = event.radius * event.radius;
+
+  for (let row = 0; row < grid.length; row += 1) {
+    for (let col = 0; col < grid[row].length; col += 1) {
+      const dx = row - event.affectedX;
+      const dz = col - event.affectedZ;
+      if (dx * dx + dz * dz > radiusSquared) continue;
+      const height = getBuildingColumnHeight(grid, row, col);
+      if (height > 0 && grid[row][col].some(voxelType => voxelType === 1)) {
+        columns.push({ x: row, z: col, height });
+      }
+    }
+  }
+
+  return columns;
+}
+
+function summarizeCity(
+  grid: VoxelGridData,
+  economicData: EconomicData | null,
+  weather: WeatherState | null,
+  activeEvent: DisasterEvent | null
+): CitySummary {
+  const counts = countCityVoxels(grid);
+  
+  // Real-world urban formulas
+  const gridArea = grid.length * (grid[0]?.length ?? 1);
+  const avgDensity = counts.buildingVoxelCount / Math.max(1, gridArea);
+  // Assume each park voxel column is roughly height 3, so footprint is treeCount / 3
+  const parkFootprint = counts.treeCount / 3;
+
   const gdpGrowth = economicData?.gdpGrowth ?? 2.2;
   const inflation = economicData?.inflation ?? 3.1;
-  const greenScore = nonAir > 0 ? (green / nonAir) * 100 : 0;
-  const trafficScore = buildingColumns > 0 ? 100 - (skyscraperColumns / buildingColumns) * 50 : 100;
-  const healthScore = greenScore * 0.4 + (100 - disasterIntensity) * 0.6;
-  const economyScore = (buildingColumns > 0 ? (tallBuildings / buildingColumns) * 60 : 0) + gdpGrowth * 4 - inflation * 2;
-  const happiness = healthScore * 0.3 + trafficScore * 0.3 + greenScore * 0.2 + economyScore * 0.2 - disasterIntensity * 0.5;
-  const population = 850000 + (happiness - 50) * 5000 + economyScore * 3000 - disasterIntensity * 20000;
+  const disasterIntensity = activeEvent?.intensity ?? 0;
+  const rawTempC = weather?.tempC ?? 22;
+  const simulatedTempC = activeEvent?.eventType === 'heatwave' ? rawTempC + 8 : rawTempC;
+
+  const macroEconomy = (gdpGrowth - 2.0) * 10 - (inflation - 2.0) * 10;
+  
+  // Base scores derived from city state
+  // Economy thrives on density but is modulated by macro factors
+  let economyScore = 45 + (avgDensity / 8) * 45 + macroEconomy;
+  
+  // Green score targets ~15% park coverage for a perfect 100
+  let greenScore = (parkFootprint / (gridArea * 0.15)) * 100;
+  
+  // Traffic worsens with high density but is slightly alleviated by green spaces
+  let trafficScore = 100 - (avgDensity / 15) * 60 + (greenScore * 0.1);
+  
+  // Health depends on parks, traffic (pollution), and base livability
+  let healthScore = 35 + (greenScore * 0.4) + (trafficScore * 0.3);
+
+  let populationAdjustment = 0;
+
+  if (activeEvent) {
+    if (activeEvent.eventType === 'earthquake') {
+      const affected = countBuildingsInRadius(grid, activeEvent);
+      healthScore -= (affected.buildingCount / Math.max(1, counts.buildingVoxelCount)) * 50;
+      trafficScore -= 40;
+      economyScore -= (affected.tallBuildingCount / Math.max(1, counts.buildingColumnCount)) * 40;
+    } else if (activeEvent.eventType === 'hurricane') {
+      greenScore -= 30;
+      trafficScore -= 50;
+      healthScore -= 25;
+      economyScore -= 20;
+    } else if (activeEvent.eventType === 'flood') {
+      trafficScore -= 60;
+      economyScore -= 30;
+      healthScore -= 15;
+      populationAdjustment -= 80000;
+    } else if (activeEvent.eventType === 'fire') {
+      healthScore -= 35;
+      economyScore -= 25;
+      greenScore -= 10;
+    } else if (activeEvent.eventType === 'heatwave') {
+      healthScore -= simulatedTempC > 35 ? 30 : 15;
+      trafficScore -= 10;
+      greenScore -= 15;
+    } else if (activeEvent.eventType === 'economic_crash') {
+      economyScore -= 60;
+      populationAdjustment -= 150000;
+    }
+  }
+
+  economyScore = clampScore(economyScore);
+  greenScore = clampScore(greenScore);
+  trafficScore = clampScore(trafficScore);
+  healthScore = clampScore(healthScore);
+  
+  // Happiness is a weighted aggregate of the quality of life factors
+  let happiness = clampScore(
+    (healthScore * 0.35) + 
+    (economyScore * 0.30) + 
+    (trafficScore * 0.20) + 
+    (greenScore * 0.15)
+  );
+
+  const totalFloorArea = counts.buildingVoxelCount * SQFT_PER_VOXEL_LEVEL;
+  const gdpDollars = BASE_GDP + (totalFloorArea / BASE_COMMERCIAL_SQFT) * BASE_GDP * 0.15;
+  const baselineBuildingVoxels = counts.maxPossibleVoxels * 0.1 || 500000;
+  const population = BASE_POPULATION + (counts.buildingVoxelCount / baselineBuildingVoxels) * 50000 + populationAdjustment;
+  const economyScoreDelta = economyScore - 50;
+  const unemployment = BASE_UNEMPLOYMENT - (economyScoreDelta * 0.02);
 
   return {
     population: Math.max(0, Math.round(population)),
-    happiness: clampScore(happiness),
-    economyScore: clampScore(economyScore),
-    healthScore: clampScore(healthScore),
-    trafficScore: clampScore(trafficScore),
-    greenScore: clampScore(greenScore),
+    happiness,
+    economyScore,
+    healthScore,
+    trafficScore,
+    greenScore,
+    gdpDollars,
+    unemployment
   };
 }
 
@@ -178,6 +398,7 @@ function styles() {
     .building-info-panel span { color: #d8d4c8; font-size: .78rem; }
     .building-info-panel div { display: flex; gap: .35rem; margin-top: .2rem; }
     .building-info-panel button { padding: .35rem .5rem; font-size: .75rem; }
+    .density-label { white-space: nowrap; padding: .32rem .5rem; border: 1px solid rgba(255,255,255,.28); border-radius: 999px; color: #fff; background: rgba(0,0,0,.78); box-shadow: 0 10px 28px rgba(0,0,0,.38); font-size: .74rem; font-weight: 700; }
     @media (max-width: 760px) { .event-panel { top: auto; right: 1rem; bottom: 9.5rem; } .stats-panel { max-height: 45vh; } .toolbar { bottom: .5rem; } }
   `;
 }
@@ -189,10 +410,12 @@ export default function App() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<Tool>('select');
   const [selectedCell, setSelectedCell] = useState<GridCell | null>(null);
+  const [hoveredCell, setHoveredCell] = useState<GridCell | null>(null);
   const [selectedBuilding, setSelectedBuilding] = useState<SelectedBuilding | null>(null);
   const [, setPendingBuildingMove] = useState<SelectedBuilding | null>(null);
   const [moveSource, setMoveSource] = useState<MoveSource | null>(null);
-  const [buildingHeight, setBuildingHeight] = useState(18);
+  const [buildingDimensions, setBuildingDimensions] = useState<BuildingDimensions>({ width: 1, depth: 1, height: 10 });
+  const [densityHeatmapEnabled, setDensityHeatmapEnabled] = useState(false);
   const [undoFeedback, setUndoFeedback] = useState<string | null>(null);
   const [resetFeedback, setResetFeedback] = useState<string | null>(null);
   const [isResetting, setIsResetting] = useState(false);
@@ -230,6 +453,28 @@ export default function App() {
   const economicData = economicRows[0] ?? null;
   const currentIdentity = connectionState.identity?.toHexString() ?? null;
   const liveCity = useMemo(() => (baseGrid ? applyCityEdits(baseGrid, cityEdits).liveGrid : null), [baseGrid, cityEdits]);
+  const liveBuildingLookup = useMemo(() => buildLiveBuildingLookup(buildingLookup, cityEdits), [buildingLookup, cityEdits]);
+  const activeDisasterEvent = useMemo(() => {
+    if (!cityStats?.disasterActive) return null;
+    return [...events]
+      .filter(event => event.eventType === cityStats.disasterActive)
+      .sort((a, b) => Number(b.createdAt - a.createdAt))[0] ?? null;
+  }, [cityStats?.disasterActive, events]);
+  const citySummary = useMemo(
+    () => (liveCity ? summarizeCity(liveCity, economicData, weather, activeDisasterEvent) : null),
+    [activeDisasterEvent, economicData, liveCity, weather]
+  );
+  const ghostPreview = useMemo(() => {
+    if (activeTool === 'add_building' && hoveredCell) {
+      return {
+        x: hoveredCell.x,
+        z: hoveredCell.z,
+        width: buildingDimensions.width,
+        depth: buildingDimensions.depth,
+      };
+    }
+    return null;
+  }, [activeTool, hoveredCell, buildingDimensions]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -268,10 +513,9 @@ export default function App() {
   }, [connectionState.isActive, updateEconomicData, updateWeather]);
 
   useEffect(() => {
-    if (!liveCity || !connectionState.isActive) return;
-    const summary = summarizeCity(liveCity, economicData, cityStats?.disasterIntensity ?? 0);
-    updateCityStats(summary).catch(error => console.warn('City stats update failed:', error));
-  }, [cityStats?.disasterIntensity, connectionState.isActive, economicData, liveCity, updateCityStats]);
+    if (!citySummary || !connectionState.isActive) return;
+    updateCityStats(citySummary).catch(error => console.warn('City stats update failed:', error));
+  }, [citySummary, connectionState.isActive, updateCityStats]);
 
   const updateMoveSource = useCallback((source: MoveSource | null) => {
     moveSourceRef.current = source;
@@ -387,37 +631,88 @@ export default function App() {
   }, [selectedBuilding, updateMoveSource, updatePendingBuildingMove]);
 
   const handleCellClick = (cell: GridCell) => {
+    // STATE 2: A building is already selected and we're waiting for a drop location.
+    // Any click anywhere on the map (including ground) triggers the move.
+    const currentBuildingMove = pendingBuildingMoveRef.current;
+    if (currentBuildingMove && activeTool === 'move') {
+      moveWholeBuilding(currentBuildingMove, { x: cell.x, z: cell.z });
+      return;
+    }
+
+    if (activeTool === 'add_building') {
+      const edits = [];
+      for (let w = 0; w < buildingDimensions.width; w++) {
+        for (let d = 0; d < buildingDimensions.depth; d++) {
+          edits.push(placeBuilding({ editId: uuidv4(), toX: cell.x + w, toZ: cell.z + d, voxelType: 1, height: buildingDimensions.height, label: `Added building at ${cell.x + w}, ${cell.z + d}`, color: playerColorRef.current }));
+        }
+      }
+      Promise.all(edits).catch(error => console.warn('Building add failed:', error));
+      return;
+    }
+    
+    if (activeTool === 'add_park') {
+      placeBuilding({ editId: uuidv4(), toX: cell.x, toZ: cell.z, voxelType: 2, height: 3, label: `Added park at ${cell.x}, ${cell.z}`, color: playerColorRef.current });
+      return;
+    }
+
+    // Non-building voxel types (2=grass, 3=ground, 4=water, 5=misc) are silently ignored.
     if (cell.voxelType !== 1) return;
 
-    const building = getBuildingAt(buildingLookup, cell);
+    const building = getBuildingAt(liveBuildingLookup, cell);
     if (!building) return;
     const hydratedBuilding = hydrateSelectedBuilding(building, cell);
+
+    // STATE 1: No building selected — select it and highlight its footprint.
     setSelectedCell({ x: cell.x, z: cell.z, voxelType: cell.voxelType });
     setSelectedBuilding(hydratedBuilding);
     moveCursor({ x: cell.x, z: cell.z }).catch(error => console.warn('Cursor update failed:', error));
 
     if (activeTool === 'remove') {
       removeWholeBuilding(hydratedBuilding);
-    } else if (activeTool === 'add_building') {
-      placeBuilding({ editId: uuidv4(), toX: cell.x, toZ: cell.z, voxelType: 1, height: buildingHeight, label: `Added building at ${cell.x}, ${cell.z}`, color: playerColorRef.current });
-    } else if (activeTool === 'add_park') {
-      placeBuilding({ editId: uuidv4(), toX: cell.x, toZ: cell.z, voxelType: 2, height: 3, label: `Added park at ${cell.x}, ${cell.z}`, color: playerColorRef.current });
     } else if (activeTool === 'move') {
-      const currentBuildingMove = pendingBuildingMoveRef.current;
-      if (!currentBuildingMove) {
-        updatePendingBuildingMove(hydratedBuilding);
-        updateMoveSource({ x: hydratedBuilding.center.x, z: hydratedBuilding.center.z, height: hydratedBuilding.heightLevels });
-      } else {
-        moveWholeBuilding(currentBuildingMove, cell);
-      }
+      // First click in move mode: select the building as the move source.
+      updatePendingBuildingMove(hydratedBuilding);
+      updateMoveSource({ x: hydratedBuilding.center.x, z: hydratedBuilding.center.z, height: hydratedBuilding.heightLevels });
     }
   };
 
+  const removeFireDamagedColumns = useCallback(async (event: DisasterEvent) => {
+    if (!liveCity) return;
+    const affectedColumns = getAffectedBuildingColumns(liveCity, event);
+    if (affectedColumns.length === 0) return;
+    const targetVoxelDamage = Math.max(1, Math.round(affectedColumns.reduce((sum, column) => sum + column.height, 0) * 0.1));
+    const shuffled = [...affectedColumns].sort(() => Math.random() - 0.5);
+    const damagedColumns: Array<GridCell & { height: number }> = [];
+    let damagedVoxels = 0;
+
+    for (const column of shuffled) {
+      damagedColumns.push(column);
+      damagedVoxels += column.height;
+      if (damagedVoxels >= targetVoxelDamage) break;
+    }
+
+    await Promise.all(
+      damagedColumns.map(column =>
+        removeBuilding({
+          editId: uuidv4(),
+          fromX: column.x,
+          fromZ: column.z,
+          fromHeight: column.height,
+          label: `Fire damaged building column at ${column.x}, ${column.z}`,
+        })
+      )
+    );
+  }, [liveCity, removeBuilding]);
+
   const handleTriggerDisaster = async (eventType: string, intensity: number, affectedCell: GridCell) => {
     const boundedIntensity = Math.max(0, Math.min(100, Math.round(intensity)));
-    await triggerDisaster({ eventId: uuidv4(), eventType, intensity: boundedIntensity, affectedX: affectedCell.x, affectedZ: affectedCell.z, radius: 18, duration: 60 });
+    const event = { eventType, intensity: boundedIntensity, affectedX: affectedCell.x, affectedZ: affectedCell.z, radius: 18 };
+    await triggerDisaster({ eventId: uuidv4(), ...event, duration: 60 });
+    if (eventType === 'fire') {
+      await removeFireDamagedColumns(event);
+    }
     if (!liveCity) return;
-    await updateCityStats(summarizeCity(liveCity, economicData, boundedIntensity));
+    await updateCityStats(summarizeCity(liveCity, economicData, weather, event));
   };
 
   const disasterOverlay = useMemo(() => {
@@ -461,17 +756,20 @@ export default function App() {
         players={onlinePlayers}
         selectedBuilding={selectedBuilding}
         moveSource={moveSource}
+        densityHeatmapEnabled={densityHeatmapEnabled}
         onCellClick={handleCellClick}
+        onCellHover={setHoveredCell}
         onMoveSelected={handleMoveSelected}
         onRemoveSelected={() => selectedBuilding && removeWholeBuilding(selectedBuilding)}
         onCancelSelection={clearSelection}
         onFpsUpdate={setFps}
+        ghostPreview={ghostPreview}
       />
       {disasterOverlay && <div className="disaster-overlay" style={{ background: disasterOverlay }} />}
-      <StatsPanel cityStats={cityStats} weather={weather} economicData={economicData} players={players} fps={fps} cityShape={cityShape} />
+      <StatsPanel cityStats={cityStats} citySummary={citySummary} weather={weather} economicData={economicData} players={players} fps={fps} cityShape={cityShape} />
       <TradePanel players={players} tradeOffers={tradeOffers} currentIdentity={currentIdentity} />
       <EventPanel cityStats={cityStats} events={events} selectedCell={selectedCell} onTriggerDisaster={handleTriggerDisaster} onClearDisaster={() => clearDisaster()} />
-      <Toolbar activeTool={activeTool} selectedCell={selectedCell} moveSource={moveSource} selectedBuildingName={selectedBuilding?.name ?? null} buildingHeight={buildingHeight} undoFeedback={undoFeedback} resetFeedback={resetFeedback} isResetting={isResetting} onToolChange={setActiveTool} onHeightChange={setBuildingHeight} onUndo={handleUndo} onFullReset={handleFullReset} />
+      <Toolbar activeTool={activeTool} selectedCell={selectedCell} moveSource={moveSource} selectedBuildingName={selectedBuilding?.name ?? null} buildingDimensions={buildingDimensions} undoFeedback={undoFeedback} resetFeedback={resetFeedback} isResetting={isResetting} densityHeatmapEnabled={densityHeatmapEnabled} onDensityHeatmapToggle={() => setDensityHeatmapEnabled(enabled => !enabled)} onToolChange={setActiveTool} onDimensionsChange={setBuildingDimensions} onUndo={handleUndo} onFullReset={handleFullReset} />
     </main>
   );
 }

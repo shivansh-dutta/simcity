@@ -2,18 +2,21 @@ import type { GridCell } from './VoxelGrid';
 
 export type Tool = 'select' | 'move' | 'remove' | 'add_building' | 'add_park';
 export type MoveSource = GridCell & { height: number };
+export type BuildingDimensions = { width: number; depth: number; height: number };
 
 type ToolbarProps = {
   activeTool: Tool;
   selectedCell: GridCell | null;
   moveSource: MoveSource | null;
   selectedBuildingName: string | null;
-  buildingHeight: number;
+  buildingDimensions: BuildingDimensions;
   undoFeedback: string | null;
   resetFeedback: string | null;
   isResetting: boolean;
+  densityHeatmapEnabled: boolean;
+  onDensityHeatmapToggle: () => void;
   onToolChange: (tool: Tool) => void;
-  onHeightChange: (height: number) => void;
+  onDimensionsChange: (dimensions: BuildingDimensions) => void;
   onUndo: () => void;
   onFullReset: () => void;
 };
@@ -31,12 +34,14 @@ export default function Toolbar({
   selectedCell,
   moveSource,
   selectedBuildingName,
-  buildingHeight,
+  buildingDimensions,
   undoFeedback,
   resetFeedback,
   isResetting,
+  densityHeatmapEnabled,
+  onDensityHeatmapToggle,
   onToolChange,
-  onHeightChange,
+  onDimensionsChange,
   onUndo,
   onFullReset,
 }: ToolbarProps) {
@@ -54,14 +59,26 @@ export default function Toolbar({
         <button className={resetFeedback ? 'reset-feedback' : ''} disabled={isResetting} type="button" onClick={onFullReset}>
           {isResetting ? 'Resetting' : 'Full Reset'}
         </button>
+        <button className={densityHeatmapEnabled ? 'active' : ''} type="button" onClick={onDensityHeatmapToggle}>
+          🌡️ Density
+        </button>
       </div>
 
       {activeTool === 'add_building' && (
-        <label className="height-control">
-          Height
-          <input type="range" min={1} max={50} value={buildingHeight} onChange={event => onHeightChange(Number(event.target.value))} />
-          <span>{buildingHeight} floors</span>
-        </label>
+        <div className="dimensions-control">
+          <label>
+            Width
+            <input type="number" min={1} max={20} value={buildingDimensions.width} onChange={event => onDimensionsChange({ ...buildingDimensions, width: Number(event.target.value) })} />
+          </label>
+          <label>
+            Depth
+            <input type="number" min={1} max={20} value={buildingDimensions.depth} onChange={event => onDimensionsChange({ ...buildingDimensions, depth: Number(event.target.value) })} />
+          </label>
+          <label>
+            Height
+            <input type="number" min={1} max={50} value={buildingDimensions.height} onChange={event => onDimensionsChange({ ...buildingDimensions, height: Number(event.target.value) })} />
+          </label>
+        </div>
       )}
 
       <div className="toolbar-status">

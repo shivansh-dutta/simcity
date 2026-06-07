@@ -1,25 +1,26 @@
-# HANDOFF - Urban What-If
+# HANDOFF — Urban What-If
 
 ## Last completed phase
-Phase 5+ - Whole-Building Selection And Footprint Edits
+Phase 5+ — Building Size Inputs & Real Economic Metrics
 
 ## What exists and works
-- frontend/client/src/utils/buildingMap.ts: builds cell-to-building and building-to-footprint maps from building_id_grid/building_gdf.
-- frontend/client/src/components/VoxelGrid.tsx: clicks include voxel type so only building voxels are interactive.
-- frontend/client/src/App.tsx: selects full building footprints and applies move/remove across all footprint cells.
-- frontend/client/src/components/CityScene.tsx: highlights full footprints and shows a readable building info panel.
+- Toolbar.tsx: Supports BuildingDimensions inputs (Width, Depth, Height).
+- VoxelGrid.tsx: Renders a GhostPreviewMesh for add building mode and tracks pointer over cells.
+- App.tsx: summarizeCity calculates real GDP and population based on base rates and total voxel volume. Stats sync immediately on edit.
+- StatsPanel.tsx: Displays formatted GDP and Unemployment.
+- Build verified: app runs and React fast refresh is active.
 
 ## Key decisions made that differ from SPEC.md
-- Whole-building move/remove uses existing per-cell reducers instead of adding array reducer args.
+- Used onPointerOver instead of onPointerMove to trigger cell hovers on the GroundLayer.
 
 ## Current known issues
-- Vite still warns that the Three/R3F bundle chunk is larger than 500 kB.
+- KNOWN_FLAWS.md contains a bug where "Moving an already-moved building causes it to disappear".
 
 ## Verify the previous phase still works
-cd frontend && npm run build
+npm run build (from frontend/)
 
 ## Next phase starts with
-Optionally add direct search/camera focus for specific landmark testing like One World Trade Center.
+Fix the "Disappearing Building" bug when moving an already moved building.
 
-##Phases Before That
-- Phase 5 multiplayer sync, full reset, and visual polish were completed before this session.
+## Phases Before That
+- Phase 5+ density heatmap overlay, Phase 5 multiplayer sync, full reset, simulation fixes, visual polish, and whole-building selection.

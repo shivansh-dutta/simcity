@@ -17,7 +17,10 @@ type CitySceneProps = {
   players: readonly Player[];
   selectedBuilding: SelectedBuilding | null;
   moveSource: MoveSource | null;
+  ghostPreview: { x: number; z: number; width: number; depth: number } | null;
+  densityHeatmapEnabled: boolean;
   onCellClick: (cell: GridCell) => void;
+  onCellHover?: (cell: GridCell | null) => void;
   onMoveSelected: () => void;
   onRemoveSelected: () => void;
   onCancelSelection: () => void;
@@ -113,6 +116,17 @@ function FpsTracker({ onFpsUpdate }: { onFpsUpdate: (fps: number) => void }) {
 
 function CameraTarget({ baseGrid }: { baseGrid: VoxelGridData }) {
   const controlsRef = useRef<React.ElementRef<typeof OrbitControls>>(null);
+  const bounds = useMemo(() => {
+    const rows = baseGrid.length;
+    const cols = baseGrid[0]?.length ?? 0;
+    const width = rows * VOXEL_SIZE;
+    const depth = cols * VOXEL_SIZE;
+    return {
+      maxX: Math.max(0, (rows - 1) * VOXEL_SIZE),
+      maxZ: Math.max(0, (cols - 1) * VOXEL_SIZE),
+      maxDistance: Math.min(2300, Math.max(450, Math.hypot(width, depth) * 1.25)),
+    };
+  }, [baseGrid]);
   const target = useMemo(() => {
     const rows = baseGrid.length;
     const cols = baseGrid[0]?.length ?? 0;
@@ -124,7 +138,24 @@ function CameraTarget({ baseGrid }: { baseGrid: VoxelGridData }) {
     controlsRef.current?.update();
   }, [target]);
 
-  return <OrbitControls ref={controlsRef} enableDamping dampingFactor={0.08} maxPolarAngle={Math.PI / 2.1} />;
+  useFrame(() => {
+    const controls = controlsRef.current;
+    if (!controls) return;
+    controls.target.x = THREE.MathUtils.clamp(controls.target.x, 0, bounds.maxX);
+    controls.target.y = THREE.MathUtils.clamp(controls.target.y, 0, VOXEL_SIZE * 35);
+    controls.target.z = THREE.MathUtils.clamp(controls.target.z, 0, bounds.maxZ);
+  });
+
+  return (
+    <OrbitControls
+      ref={controlsRef}
+      enableDamping
+      dampingFactor={0.08}
+      minDistance={70}
+      maxDistance={bounds.maxDistance}
+      maxPolarAngle={Math.PI / 2.1}
+    />
+  );
 }
 
 export default function CityScene({
@@ -133,7 +164,10 @@ export default function CityScene({
   players,
   selectedBuilding,
   moveSource,
+  ghostPreview,
+  densityHeatmapEnabled,
   onCellClick,
+  onCellHover,
   onMoveSelected,
   onRemoveSelected,
   onCancelSelection,
@@ -145,7 +179,7 @@ export default function CityScene({
       <ambientLight intensity={1.55} />
       <hemisphereLight args={['#FFFFFF', '#B99B73', 1.55]} />
       <directionalLight position={[220, 340, 180]} intensity={2.75} />
-      <VoxelGrid baseGrid={baseGrid} edits={edits} onCellClick={onCellClick} />
+      <VoxelGrid baseGrid={baseGrid} edits={edits} densityHeatmapEnabled={densityHeatmapEnabled} onCellClick={onCellClick} onCellHover={onCellHover} ghostPreview={ghostPreview} />
       <PlayerCursors players={players} />
       <BuildingHighlight building={selectedBuilding} />
       <BuildingInfoPanel building={selectedBuilding} onMoveSelected={onMoveSelected} onRemoveSelected={onRemoveSelected} onCancelSelection={onCancelSelection} />

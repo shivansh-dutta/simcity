@@ -1,5 +1,6 @@
-import { useLayoutEffect, useMemo, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ThreeEvent } from '@react-three/fiber';
+import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import type { CityEdit } from '../module_bindings/types';
 
@@ -7,6 +8,7 @@ export type VoxelGridData = number[][][];
 export type GridCell = { x: number; z: number; voxelType?: number };
 
 const VOXEL_SIZE = 5;
+const DENSE_CITY_BUILDING_COUNT = 350;
 const TYPE_COLORS: Record<number, string> = {
   1: '#7D858B',
   2: '#16A34A',
@@ -17,12 +19,24 @@ const TYPE_COLORS: Record<number, string> = {
 
 type VoxelInstance = GridCell & { y: number };
 type VoxelGroup = { voxelType: number; color: string; instances: VoxelInstance[] };
+type HeatmapBucket = { color: string; instances: VoxelInstance[] };
 
 type VoxelGridProps = {
   baseGrid: VoxelGridData;
   edits: readonly CityEdit[];
+  densityHeatmapEnabled: boolean;
   onCellClick: (cell: GridCell) => void;
+  onCellHover?: (cell: GridCell | null) => void;
+  ghostPreview?: { x: number; z: number; width: number; depth: number } | null;
 };
+
+type HoveredDensity = GridCell & { count: number };
+
+const DENSITY_RADIUS = 5;
+const HEATMAP_UPDATE_RADIUS = 10;
+const heatColor = new THREE.Color();
+const heatA = new THREE.Color();
+const heatB = new THREE.Color();
 
 function cloneGrid(grid: VoxelGridData): VoxelGridData {
   return grid.map(row => row.map(column => column.slice()));
@@ -108,6 +122,116 @@ function groupVoxels(liveGrid: VoxelGridData): VoxelGroup[] {
     color: TYPE_COLORS[voxelType] ?? '#A7A7A7',
     instances,
   }));
+}
+
+function cellKey(x: number, z: number): string {
+  return `${x}_${z}`;
+}
+
+function countBuildingVoxelsNear(grid: VoxelGridData, x: number, z: number): number {
+  let count = 0;
+  const radiusSquared = DENSITY_RADIUS * DENSITY_RADIUS;
+  const minX = Math.max(0, x - DENSITY_RADIUS);
+  const maxX = Math.min(grid.length - 1, x + DENSITY_RADIUS);
+
+  for (let row = minX; row <= maxX; row += 1) {
+    const minZ = Math.max(0, z - DENSITY_RADIUS);
+    const maxZ = Math.min((grid[row]?.length ?? 1) - 1, z + DENSITY_RADIUS);
+    for (let col = minZ; col <= maxZ; col += 1) {
+      const dx = row - x;
+      const dz = col - z;
+      if (dx * dx + dz * dz > radiusSquared) continue;
+      for (const voxelType of grid[row]?.[col] ?? []) {
+        if (voxelType === 1) count += 1;
+      }
+    }
+  }
+
+  return count;
+}
+
+function heatmapColor(normalizedDensity: number): THREE.Color {
+  const value = Math.max(0, Math.min(1, normalizedDensity));
+  if (value <= 0.3) {
+    heatA.set('#1a237e');
+    heatB.set('#4CAF50');
+    return heatColor.copy(heatA).lerp(heatB, value / 0.3);
+  }
+  if (value <= 0.6) {
+    heatA.set('#4CAF50');
+    heatB.set('#FF9800');
+    return heatColor.copy(heatA).lerp(heatB, (value - 0.3) / 0.3);
+  }
+  heatA.set('#FF9800');
+  heatB.set('#F44336');
+  return heatColor.copy(heatA).lerp(heatB, (value - 0.6) / 0.4);
+}
+
+function buildDensityCounts(grid: VoxelGridData, groundInstances: VoxelInstance[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const cell of groundInstances) {
+    counts.set(cellKey(cell.x, cell.z), countBuildingVoxelsNear(grid, cell.x, cell.z));
+  }
+  return counts;
+}
+
+function densityScaleMax(counts: Map<string, number>): number {
+  const values = [...counts.values()].sort((a, b) => a - b);
+  if (values.length === 0) return 1;
+  return Math.max(1, Math.min(DENSE_CITY_BUILDING_COUNT, values[Math.floor((values.length - 1) * 0.95)]));
+}
+
+function changedCellsForEdit(edit: CityEdit): GridCell[] {
+  const cells: GridCell[] = [];
+  if (edit.editType === 'remove' || edit.editType === 'move') {
+    cells.push({ x: edit.fromX, z: edit.fromZ });
+  }
+  if (edit.editType === 'place' || edit.editType === 'zone_change' || edit.editType === 'move') {
+    cells.push({ x: edit.toX, z: edit.toZ });
+  }
+  return cells;
+}
+
+function updateDensityCountsNearEdits(
+  counts: Map<string, number>,
+  grid: VoxelGridData,
+  groundKeys: Set<string>,
+  edits: readonly CityEdit[]
+): Map<string, number> {
+  const next = new Map(counts);
+  for (const edit of edits) {
+    for (const changed of changedCellsForEdit(edit)) {
+      for (let x = changed.x - HEATMAP_UPDATE_RADIUS; x <= changed.x + HEATMAP_UPDATE_RADIUS; x += 1) {
+        for (let z = changed.z - HEATMAP_UPDATE_RADIUS; z <= changed.z + HEATMAP_UPDATE_RADIUS; z += 1) {
+          const key = cellKey(x, z);
+          if (!groundKeys.has(key)) continue;
+          next.set(key, countBuildingVoxelsNear(grid, x, z));
+        }
+      }
+    }
+  }
+  return next;
+}
+
+function buildHeatmapBuckets(
+  instances: VoxelInstance[],
+  densityCounts: Map<string, number>,
+  maxDensityCount: number
+): HeatmapBucket[] {
+  const buckets = new Map<string, HeatmapBucket>();
+  const scale = Math.max(1, maxDensityCount);
+
+  for (const voxel of instances) {
+    const count = densityCounts.get(cellKey(voxel.x, voxel.z)) ?? 0;
+    const normalized = Math.max(0, Math.min(1, count / scale));
+    const bucketValue = Math.round(normalized * 12) / 12;
+    const color = `#${heatmapColor(bucketValue).getHexString()}`;
+    const bucket = buckets.get(color) ?? { color, instances: [] };
+    bucket.instances.push(voxel);
+    buckets.set(color, bucket);
+  }
+
+  return [...buckets.values()];
 }
 
 function createBuildingWindowTexture() {
@@ -221,6 +345,102 @@ function useCellClick(instances: VoxelInstance[], voxelType: number, onCellClick
   return handleClick;
 }
 
+function HeatmapBucketMesh({ bucket }: { bucket: HeatmapBucket }) {
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+  const matrix = useMemo(() => new THREE.Matrix4(), []);
+  const disableRaycast = () => null;
+
+  useLayoutEffect(() => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
+
+    bucket.instances.forEach((voxel, index) => {
+      matrix.setPosition(voxel.x * VOXEL_SIZE, voxel.y * VOXEL_SIZE + VOXEL_SIZE * 0.64, voxel.z * VOXEL_SIZE);
+      mesh.setMatrixAt(index, matrix);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+  }, [bucket.instances, matrix]);
+
+  return (
+    <instancedMesh ref={meshRef} args={[undefined, undefined, bucket.instances.length]} raycast={disableRaycast}>
+      <boxGeometry args={[VOXEL_SIZE * 1.12, VOXEL_SIZE * 0.22, VOXEL_SIZE * 1.12]} />
+      <meshBasicMaterial color={bucket.color} transparent opacity={0.78} depthWrite={false} />
+    </instancedMesh>
+  );
+}
+
+function GroundHeatmapOverlay({
+  instances,
+  densityCounts,
+  maxDensityCount,
+}: {
+  instances: VoxelInstance[];
+  densityCounts: Map<string, number>;
+  maxDensityCount: number;
+}) {
+  const buckets = useMemo(
+    () => buildHeatmapBuckets(instances, densityCounts, maxDensityCount),
+    [densityCounts, instances, maxDensityCount]
+  );
+
+  return (
+    <group>
+      {buckets.map(bucket => (
+        <HeatmapBucketMesh key={bucket.color} bucket={bucket} />
+      ))}
+    </group>
+  );
+}
+
+function GroundLayer({
+  group,
+  densityHeatmapEnabled,
+  densityCounts,
+  maxDensityCount,
+  onCellClick,
+  onDensityHover,
+  onCellHover,
+}: {
+  group: VoxelGroup;
+  densityHeatmapEnabled: boolean;
+  densityCounts: Map<string, number>;
+  maxDensityCount: number;
+  onCellClick: (cell: GridCell) => void;
+  onDensityHover: (density: HoveredDensity | null) => void;
+  onCellHover?: (cell: GridCell | null) => void;
+}) {
+  const meshRef = useVoxelMatrices(group.instances);
+  const handleClick = useCellClick(group.instances, group.voxelType, onCellClick);
+
+  const handlePointerOver = (event: ThreeEvent<PointerEvent>) => {
+    if (event.instanceId === undefined) return;
+    event.stopPropagation();
+    const voxel = group.instances[event.instanceId];
+    if (!voxel) return;
+    if (densityHeatmapEnabled) {
+      onDensityHover({ x: voxel.x, z: voxel.z, count: densityCounts.get(cellKey(voxel.x, voxel.z)) ?? 0 });
+    }
+    if (onCellHover) {
+      onCellHover({ x: voxel.x, z: voxel.z, voxelType: group.voxelType });
+    }
+  };
+
+  const handlePointerOut = () => {
+    if (densityHeatmapEnabled) onDensityHover(null);
+    if (onCellHover) onCellHover(null);
+  };
+
+  return (
+    <group>
+      <instancedMesh ref={meshRef} args={[undefined, undefined, group.instances.length]} onClick={handleClick} onPointerOver={handlePointerOver} onPointerOut={handlePointerOut}>
+        <boxGeometry args={[VOXEL_SIZE, VOXEL_SIZE, VOXEL_SIZE]} />
+        <meshBasicMaterial color={group.color} />
+      </instancedMesh>
+      {densityHeatmapEnabled && <GroundHeatmapOverlay instances={group.instances} densityCounts={densityCounts} maxDensityCount={maxDensityCount} />}
+    </group>
+  );
+}
+
 function BuildingFacadeMesh({
   instances,
   voxelType,
@@ -294,16 +514,40 @@ function BuildingLayer({
 
 function InstancedVoxelLayer({
   group,
+  densityHeatmapEnabled,
+  densityCounts,
+  maxDensityCount,
   onCellClick,
+  onDensityHover,
+  onCellHover,
 }: {
   group: VoxelGroup;
+  densityHeatmapEnabled: boolean;
+  densityCounts: Map<string, number>;
+  maxDensityCount: number;
   onCellClick: (cell: GridCell) => void;
+  onDensityHover: (density: HoveredDensity | null) => void;
+  onCellHover?: (cell: GridCell | null) => void;
 }) {
   const meshRef = useVoxelMatrices(group.instances);
   const handleClick = useCellClick(group.instances, group.voxelType, onCellClick);
 
   if (group.voxelType === 1) {
     return <BuildingLayer instances={group.instances} onCellClick={onCellClick} />;
+  }
+
+  if (group.voxelType === 3) {
+    return (
+      <GroundLayer
+        group={group}
+        densityHeatmapEnabled={densityHeatmapEnabled}
+        densityCounts={densityCounts}
+        maxDensityCount={maxDensityCount}
+        onCellClick={onCellClick}
+        onDensityHover={onDensityHover}
+        onCellHover={onCellHover}
+      />
+    );
   }
 
   return (
@@ -314,15 +558,124 @@ function InstancedVoxelLayer({
   );
 }
 
-export default function VoxelGrid({ baseGrid, edits, onCellClick }: VoxelGridProps) {
-  const { liveGrid } = useMemo(() => applyCityEdits(baseGrid, edits), [baseGrid, edits]);
-  const voxelGroups = useMemo(() => groupVoxels(liveGrid), [liveGrid]);
+function CityBoundaryApron({ grid }: { grid: VoxelGridData }) {
+  const rows = grid.length;
+  const cols = grid[0]?.length ?? 0;
+  const width = rows * VOXEL_SIZE;
+  const depth = cols * VOXEL_SIZE;
+  const centerX = Math.max(0, ((rows - 1) * VOXEL_SIZE) / 2);
+  const centerZ = Math.max(0, ((cols - 1) * VOXEL_SIZE) / 2);
+  const apron = 250;
+  const strip = 80;
+  const waterWidth = width + apron * 2;
+  const waterDepth = depth + apron * 2;
+  const shoreWidth = width + strip;
+  const shoreDepth = depth + strip;
+  const disableRaycast = () => null;
 
   return (
     <group>
+      <mesh raycast={disableRaycast} position={[centerX, -VOXEL_SIZE * 0.7, centerZ]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[waterWidth, waterDepth]} />
+        <meshBasicMaterial color="#2F9BDA" side={THREE.DoubleSide} />
+      </mesh>
+      <mesh raycast={disableRaycast} position={[centerX, -VOXEL_SIZE * 0.58, centerZ]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[shoreWidth, shoreDepth]} />
+        <meshBasicMaterial color="#8F8065" side={THREE.DoubleSide} />
+      </mesh>
+      <mesh raycast={disableRaycast} position={[centerX, -VOXEL_SIZE * 0.46, -VOXEL_SIZE / 2 - strip / 2]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[shoreWidth, strip]} />
+        <meshBasicMaterial color="#6E8F87" transparent opacity={0.62} side={THREE.DoubleSide} depthWrite={false} />
+      </mesh>
+      <mesh raycast={disableRaycast} position={[centerX, -VOXEL_SIZE * 0.46, (cols - 1) * VOXEL_SIZE + VOXEL_SIZE / 2 + strip / 2]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[shoreWidth, strip]} />
+        <meshBasicMaterial color="#6E8F87" transparent opacity={0.62} side={THREE.DoubleSide} depthWrite={false} />
+      </mesh>
+      <mesh raycast={disableRaycast} position={[-VOXEL_SIZE / 2 - strip / 2, -VOXEL_SIZE * 0.46, centerZ]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[strip, shoreDepth]} />
+        <meshBasicMaterial color="#6E8F87" transparent opacity={0.62} side={THREE.DoubleSide} depthWrite={false} />
+      </mesh>
+      <mesh raycast={disableRaycast} position={[(rows - 1) * VOXEL_SIZE + VOXEL_SIZE / 2 + strip / 2, -VOXEL_SIZE * 0.46, centerZ]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[strip, shoreDepth]} />
+        <meshBasicMaterial color="#6E8F87" transparent opacity={0.62} side={THREE.DoubleSide} depthWrite={false} />
+      </mesh>
+    </group>
+  );
+}
+
+function GhostPreviewMesh({ preview }: { preview: { x: number; z: number; width: number; depth: number } | null }) {
+  if (!preview) return null;
+  const centerX = (preview.x + (preview.width - 1) / 2) * VOXEL_SIZE;
+  const centerZ = (preview.z + (preview.depth - 1) / 2) * VOXEL_SIZE;
+  const sizeX = preview.width * VOXEL_SIZE + 0.2;
+  const sizeZ = preview.depth * VOXEL_SIZE + 0.2;
+  
+  return (
+    <mesh position={[centerX, VOXEL_SIZE * 0.55, centerZ]}>
+      <boxGeometry args={[sizeX, VOXEL_SIZE * 1.12, sizeZ]} />
+      <meshBasicMaterial color="#FFD700" transparent opacity={0.6} />
+    </mesh>
+  );
+}
+
+export default function VoxelGrid({ baseGrid, edits, densityHeatmapEnabled, ghostPreview, onCellClick, onCellHover }: VoxelGridProps) {
+  const { liveGrid } = useMemo(() => applyCityEdits(baseGrid, edits), [baseGrid, edits]);
+  const voxelGroups = useMemo(() => groupVoxels(liveGrid), [liveGrid]);
+  const groundInstances = useMemo(() => voxelGroups.find(group => group.voxelType === 3)?.instances ?? [], [voxelGroups]);
+  const groundKeys = useMemo(() => new Set(groundInstances.map(cell => cellKey(cell.x, cell.z))), [groundInstances]);
+  const [densityCounts, setDensityCounts] = useState<Map<string, number>>(() => new Map());
+  const [hoveredDensity, setHoveredDensity] = useState<HoveredDensity | null>(null);
+  const previousEditIdsRef = useRef<Set<string>>(new Set());
+  const heatmapWasEnabledRef = useRef(false);
+  const maxDensityCount = useMemo(() => densityScaleMax(densityCounts), [densityCounts]);
+
+  useEffect(() => {
+    if (!densityHeatmapEnabled) {
+      heatmapWasEnabledRef.current = false;
+      setHoveredDensity(null);
+      return;
+    }
+
+    const currentEditIds = new Set(edits.map(edit => edit.editId));
+    const previousEditIds = previousEditIdsRef.current;
+    const firstEnable = !heatmapWasEnabledRef.current;
+    const resetHeatmap =
+      firstEnable ||
+      currentEditIds.size < previousEditIds.size ||
+      [...previousEditIds].some(editId => !currentEditIds.has(editId));
+    const newEdits = edits.filter(edit => !previousEditIds.has(edit.editId));
+
+    heatmapWasEnabledRef.current = true;
+    previousEditIdsRef.current = currentEditIds;
+
+    setDensityCounts(previous => {
+      if (resetHeatmap || previous.size === 0) return buildDensityCounts(liveGrid, groundInstances);
+      if (newEdits.length === 0) return previous;
+      return updateDensityCountsNearEdits(previous, liveGrid, groundKeys, newEdits);
+    });
+  }, [densityHeatmapEnabled, edits, groundInstances, groundKeys, liveGrid]);
+
+  return (
+    <group>
+      <CityBoundaryApron grid={liveGrid} />
       {voxelGroups.map(group => (
-        <InstancedVoxelLayer key={group.voxelType} group={group} onCellClick={onCellClick} />
+        <InstancedVoxelLayer
+          key={group.voxelType}
+          group={group}
+          densityHeatmapEnabled={densityHeatmapEnabled}
+          densityCounts={densityCounts}
+          maxDensityCount={maxDensityCount}
+          onCellClick={onCellClick}
+          onDensityHover={setHoveredDensity}
+          onCellHover={onCellHover}
+        />
       ))}
+      <GhostPreviewMesh preview={ghostPreview ?? null} />
+      {densityHeatmapEnabled && hoveredDensity && (
+        <Html position={[hoveredDensity.x * VOXEL_SIZE, VOXEL_SIZE * 3, hoveredDensity.z * VOXEL_SIZE]} center>
+          <div className="density-label">Density: {hoveredDensity.count} buildings nearby</div>
+        </Html>
+      )}
     </group>
   );
 }
