@@ -1,6 +1,7 @@
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useReducer as useStdbReducer, useSpacetimeDB, useTable } from 'spacetimedb/react';
 import { v4 as uuidv4 } from 'uuid';
+import ActivityFeed from './components/ActivityFeed';
 import CityScene from './components/CityScene';
 import EventPanel from './components/EventPanel';
 import StatsPanel from './components/StatsPanel';
@@ -1007,6 +1008,7 @@ export default function App() {
       />
       {disasterOverlay && <div className="disaster-overlay" style={{ background: disasterOverlay }} />}
       <StatsPanel cityStats={cityStats} citySummary={citySummary} weather={weather} economicData={economicData} players={players} fps={fps} cityShape={cityShape} clock={clock} />
+      <ActivityFeed players={players} />
       <TradePanel players={players} tradeOffers={tradeOffers} currentIdentity={currentIdentity} />
       <EventPanel
         activeEvents={activeEvents}
