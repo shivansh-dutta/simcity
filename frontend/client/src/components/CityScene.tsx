@@ -22,6 +22,7 @@ type CitySceneProps = {
   armedDisaster: { type: string; intensity: number; radius: number; deathToll: number; color: string } | null;
   hoveredCell: GridCell | null;
   densityHeatmapEnabled: boolean;
+  currentIdentity: string | null;
   onCellClick: (cell: GridCell) => void;
   onCellHover?: (cell: GridCell | null) => void;
   onMoveSelected: () => void;
@@ -32,15 +33,74 @@ type CitySceneProps = {
   clock: SimulationClock | null;
 };
 
-function PlayerCursors({ players }: { players: readonly Player[] }) {
+function PlayerCursor({ player }: { player: Player }) {
+  const sphereRef = useRef<THREE.Mesh>(null);
+
+  useFrame(({ clock }) => {
+    if (sphereRef.current) {
+      const scale = 1 + Math.sin(clock.elapsedTime * 2) * 0.08;
+      sphereRef.current.scale.setScalar(scale);
+    }
+  });
+
   return (
     <group>
-      {players.filter(player => player.isOnline).map(player => (
-        <mesh key={player.identity} position={[player.cursorX * VOXEL_SIZE, VOXEL_SIZE * 4, player.cursorZ * VOXEL_SIZE]}>
-          <sphereGeometry args={[3.4, 18, 18]} />
-          <meshStandardMaterial color={player.color || '#FFD700'} emissive={player.color || '#FFD700'} emissiveIntensity={0.35} />
+      <mesh
+        ref={sphereRef}
+        position={[player.cursorX * VOXEL_SIZE, VOXEL_SIZE * 3, player.cursorZ * VOXEL_SIZE]}
+      >
+        <sphereGeometry args={[3.4, 18, 18]} />
+        <meshStandardMaterial
+          color={player.color || '#FFD700'}
+          emissive={player.color || '#FFD700'}
+          emissiveIntensity={0.35}
+        />
+        <Html position={[0, 6, 0]} center style={{ pointerEvents: 'none' }}>
+          <div style={{
+            padding: '2px 8px',
+            borderRadius: 999,
+            background: 'rgba(0,0,0,0.78)',
+            color: '#fff',
+            fontSize: 11,
+            fontFamily: '"Aptos","Segoe UI",sans-serif',
+            fontWeight: 600,
+            whiteSpace: 'nowrap',
+            border: `1px solid ${player.color || '#FFD700'}`,
+          }}>
+            {player.username}
+          </div>
+        </Html>
+      </mesh>
+      {player.isPlacingDisaster && (
+        <mesh
+          position={[player.disasterPreviewX * VOXEL_SIZE, 0.5, player.disasterPreviewZ * VOXEL_SIZE]}
+          rotation={[-Math.PI / 2, 0, 0]}
+        >
+          <ringGeometry args={[
+            Math.max(0, (player.disasterPreviewRadius - 0.5) * VOXEL_SIZE),
+            (player.disasterPreviewRadius + 0.5) * VOXEL_SIZE,
+            64,
+          ]} />
+          <meshBasicMaterial
+            color={player.color || '#FFD700'}
+            transparent
+            opacity={0.5}
+            side={THREE.DoubleSide}
+          />
         </mesh>
-      ))}
+      )}
+    </group>
+  );
+}
+
+function PlayerCursors({ players, currentIdentity }: { players: readonly Player[]; currentIdentity: string | null }) {
+  return (
+    <group>
+      {players
+        .filter(p => p.isOnline && p.identity !== currentIdentity)
+        .map(player => (
+          <PlayerCursor key={player.identity} player={player} />
+        ))}
     </group>
   );
 }
@@ -173,6 +233,7 @@ export default function CityScene({
   armedDisaster,
   hoveredCell,
   densityHeatmapEnabled,
+  currentIdentity,
   onCellClick,
   onCellHover,
   onMoveSelected,
@@ -190,7 +251,7 @@ export default function CityScene({
       <directionalLight position={[220, 340, 180]} intensity={2.75} />
       <VoxelGrid baseGrid={baseGrid} edits={edits} densityHeatmapEnabled={densityHeatmapEnabled} onCellClick={onCellClick} onCellHover={onCellHover} ghostPreview={ghostPreview} armedDisaster={armedDisaster} hoveredCell={hoveredCell} />
       {agentsVisible && <AgentLayer clock={clock} baseGrid={baseGrid} />}
-      <PlayerCursors players={players} />
+      <PlayerCursors players={players} currentIdentity={currentIdentity} />
       <BuildingHighlight building={selectedBuilding} />
       <BuildingInfoPanel building={selectedBuilding} onMoveSelected={onMoveSelected} onRemoveSelected={onRemoveSelected} onCancelSelection={onCancelSelection} />
       <MoveBeam source={moveSource} />
