@@ -64,8 +64,9 @@ export default function AIAdvisor({ cityStats, citySummary, weather, economicDat
     const unemployment = (citySummary?.unemployment ?? economicData?.unemployment ?? 0).toFixed(1);
     const playerCount = players.filter(p => p.isOnline).length;
 
+    const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
     const recentActions = [...players]
-      .filter(p => p.lastAction)
+      .filter(p => p.lastAction && Number(p.lastActionAt) > fiveMinutesAgo)
       .sort((a, b) => Number(b.lastActionAt) - Number(a.lastActionAt))
       .slice(0, 5)
       .map(p => p.lastAction)

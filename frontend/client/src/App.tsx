@@ -8,7 +8,6 @@ import NewsTicker from './components/NewsTicker';
 import EventPanel from './components/EventPanel';
 import StatsPanel from './components/StatsPanel';
 import Toolbar, { type MoveSource } from './components/Toolbar';
-import TradePanel from './components/TradePanel';
 import { applyCityEdits, type GridCell, type VoxelGridData } from './components/VoxelGrid';
 import { reducers, tables } from './module_bindings';
 import type { CityEdit, EconomicData, Event, WeatherState, CityStats } from './module_bindings/types';
@@ -263,7 +262,9 @@ function summarizeCity(
   weather: WeatherState | null,
   activeEvents: Event[],
   cityStats: CityStats | null,
-  currentAgents: { car: number, pedestrian: number } | null
+  currentAgents: { car: number, pedestrian: number } | null,
+  airQuality: { aqi: number; pm25: number } | null,
+  buildingMetaGDP: number,
 ): CitySummary {
   const counts = countCityVoxels(grid);
   
@@ -302,48 +303,85 @@ function summarizeCity(
   // Health depends on parks, traffic (pollution), and base livability
   let healthScore = 35 + (greenScore * 0.4) + ((100 - trafficScore) * 0.3);
 
+  // Real AQI from Open-Meteo: 0-50 Good (no penalty), 50-100 Moderate, 100-200 Unhealthy
+  if (airQuality) {
+    healthScore -= Math.min(50, Math.max(0, (airQuality.aqi - 50) / 3));
+  }
+
   for (const activeEvent of activeEvents) {
+    const s = activeEvent.intensity / 100; // intensity scale: 0–1
+    const buildingRatio = () => countBuildingsInRadius(grid, activeEvent).buildingCount / Math.max(1, counts.buildingVoxelCount);
+    const tallRatio = () => countBuildingsInRadius(grid, activeEvent).tallBuildingCount / Math.max(1, counts.buildingColumnCount);
+
     if (activeEvent.eventType === 'earthquake') {
-      const affected = countBuildingsInRadius(grid, activeEvent);
-      healthScore -= (affected.buildingCount / Math.max(1, counts.buildingVoxelCount)) * 50;
-      trafficScore -= 40;
-      economyScore -= (affected.tallBuildingCount / Math.max(1, counts.buildingColumnCount)) * 40;
+      // Structural collapse, road damage, economic damage scales with affected buildings
+      healthScore  -= buildingRatio() * 60 * s;
+      trafficScore -= 45 * s;
+      economyScore -= tallRatio() * 50 * s;
+      greenScore   -= 12 * s; // uprooted trees, ruptured water mains
     } else if (activeEvent.eventType === 'hurricane') {
-      greenScore -= 30;
-      trafficScore -= 50;
-      healthScore -= 25;
-      economyScore -= 20;
+      // Widespread wind/flood destruction
+      greenScore   -= 40 * s; // trees uprooted, parks flooded
+      trafficScore -= 55 * s;
+      healthScore  -= 30 * s;
+      economyScore -= 28 * s;
     } else if (activeEvent.eventType === 'flood') {
-      trafficScore -= 60;
-      economyScore -= 30;
-      healthScore -= 15;
+      // Roads impassable, businesses closed, disease risk
+      trafficScore -= 65 * s;
+      economyScore -= 35 * s;
+      healthScore  -= 20 * s; // waterborne disease
+      greenScore   -= 8 * s;  // waterlogged parks
     } else if (activeEvent.eventType === 'fire') {
-      healthScore -= 35;
-      economyScore -= 25;
-      greenScore -= 10;
+      // Air quality, burns greenery, evacuation gridlock
+      healthScore  -= 40 * s;
+      economyScore -= 28 * s;
+      greenScore   -= 30 * s; // parks and trees burn
+      trafficScore -= 25 * s; // evacuation traffic surge
     } else if (activeEvent.eventType === 'heatwave') {
-      healthScore -= simulatedTempC > 35 ? 30 : 15;
-      trafficScore -= 10;
-      greenScore -= 15;
+      // Outdoor danger, economic productivity loss, park grass dies
+      const tempFactor = simulatedTempC > 35 ? 1.4 : 1.0;
+      healthScore  -= 30 * s * tempFactor;
+      economyScore -= 18 * s; // productivity loss, AC costs
+      trafficScore -= 10 * s;
+      greenScore   -= 22 * s; // drought kills vegetation
     } else if (activeEvent.eventType === 'economic_crash') {
-      economyScore -= 60;
+      // Financial sector collapse; poverty worsens health, fewer cars = slightly less gridlock
+      economyScore -= 65 * s;
+      healthScore  -= 18 * s; // poverty, reduced healthcare access
+      trafficScore += 8 * s;  // fewer commuters = slightly clearer roads
     } else if (activeEvent.eventType === 'blizzard') {
-      trafficScore -= 70;
-      economyScore -= 30;
+      // Transport paralysis, business closure, cold-weather health risks
+      trafficScore -= 75 * s;
+      economyScore -= 35 * s;
+      healthScore  -= 22 * s; // hypothermia, slips, accidents
+      greenScore   -= 8 * s;  // ice damage to trees
     } else if (activeEvent.eventType === 'meteor_strike') {
-      const affected = countBuildingsInRadius(grid, activeEvent);
-      healthScore -= 80;
-      trafficScore -= 80;
-      economyScore -= (affected.tallBuildingCount / Math.max(1, counts.buildingColumnCount)) * 80;
+      // Catastrophic: impact crater, fires, shockwave
+      healthScore  -= 85 * s;
+      trafficScore -= 85 * s;
+      economyScore -= (tallRatio() * 80 + 40) * s;
+      greenScore   -= 55 * s; // incinerated parks, toxic dust
     } else if (activeEvent.eventType === 'tech_boom') {
-      economyScore += 40;
+      // Economic surge, influx of workers increases traffic, green investment
+      economyScore += 45 * s;
+      trafficScore += 18 * s; // more workers, more cars on the road
+      greenScore   += 6 * s;  // tech investment often funds sustainability
     } else if (activeEvent.eventType === 'transit_strike') {
-      trafficScore -= 90;
-      economyScore -= 20;
+      // Everyone drives, workers miss shifts, stress rises
+      trafficScore -= 80 * s;
+      economyScore -= 25 * s;
+      healthScore  -= 12 * s; // stress, less walking/cycling
+    } else if (activeEvent.eventType === 'cyberattack') {
+      // Systems go dark: financial networks fail, traffic lights offline, hospitals hit
+      economyScore -= 42 * s;
+      trafficScore -= 28 * s; // traffic lights and navigation offline
+      healthScore  -= 22 * s; // hospitals, 911 systems compromised
     } else if (activeEvent.eventType === 'alien_invasion') {
-      healthScore -= 90;
-      trafficScore -= 90;
-      economyScore -= 90;
+      // Civilization-level collapse
+      healthScore  -= 90 * s;
+      trafficScore -= 90 * s;
+      economyScore -= 90 * s;
+      greenScore   -= 60 * s; // scorched earth
     }
   }
 
@@ -361,7 +399,7 @@ function summarizeCity(
   );
 
   const totalFloorArea = counts.buildingVoxelCount * SQFT_PER_VOXEL_LEVEL;
-  const gdpDollars = BASE_GDP + (totalFloorArea / BASE_COMMERCIAL_SQFT) * BASE_GDP * 0.15;
+  const gdpDollars = BASE_GDP + (totalFloorArea / BASE_COMMERCIAL_SQFT) * BASE_GDP * 0.15 + buildingMetaGDP;
   const baselineBuildingVoxels = counts.maxPossibleVoxels * 0.1 || 500000;
   const populationLoss = cityStats?.populationLoss ?? 0;
   const population = BASE_POPULATION + (counts.buildingVoxelCount / baselineBuildingVoxels) * 50000 - populationLoss;
@@ -398,14 +436,30 @@ function styles() {
     .panel h2 { font-size: 1rem; }
     .panel h3 { margin-top: 1.15rem; font-size: .82rem; color: #b8d9ff; }
     .stats-panel { left: 1rem; top: 1rem; width: min(340px, calc(100vw - 2rem)); max-height: calc(100vh - 2rem); padding: 1rem; overflow: auto; }
-    .event-panel { right: 1rem; top: 1rem; width: min(315px, calc(100vw - 2rem)); padding: 1rem; }
-    .trade-panel { left: 1rem; bottom: 5.9rem; width: min(340px, calc(100vw - 2rem)); padding: .65rem; }
+    .right-sidebar { position: absolute; right: 1rem; top: 1rem; display: flex; flex-direction: column; gap: .75rem; width: min(315px, calc(100vw - 2rem)); max-height: calc(100vh - 2rem - 7rem); z-index: 10; }
+    .right-sidebar > .panel { position: relative; }
+    .event-panel { max-height: 55vh; overflow-y: auto; padding: 1rem; }
     .toolbar { left: 50%; bottom: 1rem; width: min(920px, calc(100vw - 2rem)); padding: .85rem; transform: translateX(-50%); }
     .tool-row, .disaster-grid { display: flex; flex-wrap: wrap; gap: .5rem; }
+    .toolbar-divider { margin: .6rem 0; border: none; border-top: 1px solid rgba(255,255,255,.1); }
+    .toolbar-row { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+    .toolbar-row .spacer { margin-left: auto; }
     .toolbar-status, .metric-row, .score-label, .player-pill, .active-disaster { display: flex; justify-content: space-between; gap: .75rem; align-items: center; }
-    .toolbar-status { flex-wrap: wrap; margin-top: .65rem; color: #d8d4c8; font-size: .86rem; }
+    .toolbar-status { flex-wrap: wrap; margin-top: .6rem; padding-top: .6rem; border-top: 1px solid rgba(255,255,255,.1); color: #9ba3ae; font-size: .8rem; }
     .toolbar-flash { color: #46d9a8; font-weight: 700; }
     .height-control { display: grid; grid-template-columns: auto 1fr auto; gap: .65rem; align-items: center; margin: .75rem 0; color: #d8d4c8; font-size: .84rem; }
+    .building-editor { display: flex; flex-direction: column; gap: .55rem; margin-top: .6rem; }
+    .dim-row { display: flex; align-items: center; gap: .75rem; }
+    .dim-field { display: flex; align-items: center; gap: .4rem; }
+    .dim-field label { font-size: .75rem; color: #9ba3ae; letter-spacing: .04em; text-transform: uppercase; font-weight: 600; }
+    .dim-input { width: 54px; text-align: center; padding: .4rem .3rem; border: 1px solid rgba(255,255,255,.18); border-radius: 10px; color: #f4f1e8; background: rgba(255,255,255,.08); font: inherit; font-size: .9rem; -moz-appearance: textfield; transition: border-color .15s; }
+    .dim-input:focus { outline: none; border-color: rgba(255,215,0,.55); background: rgba(255,255,255,.12); }
+    .dim-input::-webkit-inner-spin-button, .dim-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    .desc-textarea { width: 100%; padding: .5rem .7rem; border: 1px solid rgba(255,255,255,.18); border-radius: 12px; color: #f4f1e8; background: rgba(255,255,255,.07); font: inherit; font-size: .84rem; resize: vertical; transition: border-color .15s; }
+    .desc-textarea:focus { outline: none; border-color: rgba(255,215,0,.45); background: rgba(255,255,255,.1); }
+    .desc-textarea::placeholder { color: rgba(255,255,255,.32); }
+    .gdp-row { display: flex; align-items: center; gap: .65rem; }
+    .gdp-badge { font-size: .82rem; font-weight: 700; color: #46d9a8; padding: .35rem .65rem; border-radius: 999px; background: rgba(70,217,168,.12); border: 1px solid rgba(70,217,168,.3); }
     .metric-hero { display: grid; gap: .1rem; margin-bottom: .75rem; padding: .85rem; border-radius: 16px; background: linear-gradient(135deg, rgba(255,215,0,.18), rgba(90,184,255,.1)); }
     .metric-hero span, .metric-row span, .score-label span, .active-disaster span { color: #aeb7bd; font-size: .82rem; }
     .metric-hero strong { font-size: 1.55rem; }
@@ -430,9 +484,9 @@ function styles() {
     .building-info-panel div { display: flex; gap: .35rem; margin-top: .2rem; }
     .building-info-panel button { padding: .35rem .5rem; font-size: .75rem; }
     .density-label { white-space: nowrap; padding: .32rem .5rem; border: 1px solid rgba(255,255,255,.28); border-radius: 999px; color: #fff; background: rgba(0,0,0,.78); box-shadow: 0 10px 28px rgba(0,0,0,.38); font-size: .74rem; font-weight: 700; }
-    .ai-advisor-panel { right: 1rem; top: 380px; width: min(315px, calc(100vw - 2rem)); padding: 1rem; }
+    .ai-advisor-panel { padding: 1rem; overflow-y: auto; }
     @keyframes advisorPulse { 0%,100% { box-shadow: 0 0 0 2px rgba(255,215,0,.35), 0 24px 80px rgba(0,0,0,.38); } 50% { box-shadow: 0 0 0 5px rgba(255,215,0,.65), 0 24px 80px rgba(0,0,0,.38); } }
-    @media (max-width: 760px) { .event-panel { top: auto; right: 1rem; bottom: 9.5rem; } .ai-advisor-panel { top: auto; right: 1rem; bottom: 9.5rem; display: none; } .stats-panel { max-height: 45vh; } .toolbar { bottom: .5rem; } }
+    @media (max-width: 760px) { .right-sidebar { top: auto; bottom: 9.5rem; max-height: 45vh; } .ai-advisor-panel { display: none; } .stats-panel { max-height: 45vh; } .toolbar { bottom: .5rem; } }
   `;
 }
 
@@ -457,6 +511,11 @@ export default function App() {
   const [isResetting, setIsResetting] = useState(false);
   const [agentsVisible, setAgentsVisible] = useState(true);
   const [showAdvisor, setShowAdvisor] = useState(false);
+  const [airQuality, setAirQuality] = useState<{ aqi: number; pm25: number } | null>(null);
+  const [buildingDescription, setBuildingDescription] = useState('');
+  const [gdpEstimate, setGdpEstimate] = useState<number | null>(null);
+  const [isEstimating, setIsEstimating] = useState(false);
+  const [removeFeedback, setRemoveFeedback] = useState<string | null>(null);
   const [fps, setFps] = useState(0);
   const playerColorRef = useRef(persistentValue(PLAYER_COLOR_KEY, randomPlayerColor));
   const playerNameRef = useRef(persistentValue(PLAYER_NAME_KEY, () => `Planner-${Math.floor(1000 + Math.random() * 9000)}`));
@@ -473,9 +532,9 @@ export default function App() {
   const [weatherRows] = useTable(tables.weatherState);
   const [economicRows] = useTable(tables.economicData);
   const [events] = useTable(tables.event);
-  const [tradeOffers] = useTable(tables.tradeOffer);
   const [clockRows] = useTable(tables.simulationClock);
   const [agents] = useTable(tables.agent);
+  const [buildingMetaRows] = useTable(tables.buildingMeta);
 
   const joinCity = useStdbReducer(reducers.joinCity);
   const moveCursor = useStdbReducer(reducers.moveCursor);
@@ -526,10 +585,49 @@ export default function App() {
   }
   const currentAgents = currentAgentsRef.current;
 
-  const citySummary = useMemo(
-    () => (liveCity ? summarizeCity(liveCity, economicData, weather, activeEvents, cityStats, currentAgents) : null),
-    [activeEvents, economicData, liveCity, weather, cityStats, currentAgents]
+  const buildingMetaGDP = useMemo(
+    () => buildingMetaRows.reduce((sum, row) => sum + row.gdpContributionUsd, 0),
+    [buildingMetaRows]
   );
+
+  const citySummary = useMemo(
+    () => (liveCity ? summarizeCity(liveCity, economicData, weather, activeEvents, cityStats, currentAgents, airQuality, buildingMetaGDP) : null),
+    [activeEvents, economicData, liveCity, weather, cityStats, currentAgents, airQuality, buildingMetaGDP]
+  );
+
+  // Weather and AQI adjusted for active events — used only for display in StatsPanel
+  const displayWeather = useMemo(() => {
+    if (!weather) return null;
+    let tempC = weather.tempC;
+    let windSpeed = weather.windSpeed;
+    let precipitation = weather.precipitation;
+    for (const e of activeEvents) {
+      const s = e.intensity / 100;
+      if (e.eventType === 'heatwave')       { tempC += 18 * s; }
+      else if (e.eventType === 'fire')      { tempC += 22 * s; } // wildfire radiant heat — always pushes temp up hard
+      else if (e.eventType === 'blizzard')  { tempC -= 22 * s; windSpeed += 70 * s; precipitation += 40 * s; }
+      else if (e.eventType === 'hurricane') { windSpeed += 150 * s; precipitation += 100 * s; }
+      else if (e.eventType === 'flood')     { precipitation += 70 * s; }
+      else if (e.eventType === 'tornado')   { windSpeed += 220 * s; }
+      else if (e.eventType === 'meteor_strike') { tempC += 30 * s; }
+    }
+    return { ...weather, tempC, windSpeed, precipitation };
+  }, [weather, activeEvents]);
+
+  const displayAQI = useMemo(() => {
+    if (!airQuality) return null;
+    let aqi  = airQuality.aqi;
+    let pm25 = airQuality.pm25;
+    for (const e of activeEvents) {
+      const s = e.intensity / 100;
+      if (e.eventType === 'fire')           { aqi += 200 * s; pm25 += 180 * s; } // heavy smoke
+      else if (e.eventType === 'heatwave')  { aqi += 50 * s;  pm25 += 25 * s; }  // ozone spikes
+      else if (e.eventType === 'meteor_strike') { aqi += 250 * s; pm25 += 220 * s; } // dust/ejecta
+      else if (e.eventType === 'hurricane') { aqi = Math.max(aqi - 15 * s, 0); }  // rain scrubs air
+      else if (e.eventType === 'economic_crash') { aqi -= 12 * s; pm25 -= 8 * s; } // less industry
+    }
+    return { aqi: Math.round(Math.max(0, Math.min(500, aqi))), pm25: Math.round(Math.max(0, Math.min(500, pm25))) };
+  }, [airQuality, activeEvents]);
   const ghostPreview = useMemo(() => {
     if (activeTool === 'add_building' && hoveredCell) {
       return {
@@ -607,18 +705,95 @@ export default function App() {
     return () => clearInterval(interval);
   }, [advanceClock, tickDisasters, currentIdentity, isHost]);
 
+  // Live economic data from FRED (NY unemployment, US GDP growth, CPI inflation)
   useEffect(() => {
     if (!connectionState.isActive || !isHost) return;
-    updateEconomicData({ gdpGrowth: 2.2, inflation: 3.1, unemployment: 3.9 }).catch(error => console.warn('Economic update failed:', error));
-  }, [connectionState.isActive, updateEconomicData, isHost]);
+    const FRED_KEY = import.meta.env.VITE_FRED_KEY as string | undefined;
+    if (!FRED_KEY) {
+      updateEconomicData({ gdpGrowth: 2.2, inflation: 3.1, unemployment: 3.9 }).catch(console.warn);
+      return;
+    }
+    const fred = (series: string, limit = 1) =>
+      `https://api.stlouisfed.org/fred/series/observations?series_id=${series}&api_key=${FRED_KEY}&sort_order=desc&limit=${limit}&file_type=json`;
+
+    const fetchEcon = async () => {
+      try {
+        const [uRes, gRes, cRes] = await Promise.all([
+          fetch(fred('NYUR')),          // New York State unemployment rate
+          fetch(fred('A191RL1Q225SBEA')), // US real GDP % change QoQ annualized
+          fetch(fred('CPIAUCSL', 13)),   // CPI — 13 obs to compute YoY
+        ]);
+        const [uData, gData, cData] = await Promise.all([uRes.json(), gRes.json(), cRes.json()]) as [
+          { observations: { value: string }[] },
+          { observations: { value: string }[] },
+          { observations: { value: string }[] },
+        ];
+
+        const parseVal = (obs: { value: string }[], idx = 0) => {
+          const v = parseFloat(obs[idx]?.value ?? '');
+          return isNaN(v) ? null : v;
+        };
+
+        const unemployment = parseVal(uData.observations) ?? 3.9;
+        const gdpGrowth    = parseVal(gData.observations) ?? 2.2;
+        // YoY CPI inflation: (current - 12 months ago) / 12 months ago * 100
+        const cpiNow  = parseVal(cData.observations, 0);
+        const cpiYear = parseVal(cData.observations, Math.min(12, cData.observations.length - 1));
+        const inflation = (cpiNow && cpiYear && cpiYear > 0)
+          ? ((cpiNow - cpiYear) / cpiYear) * 100
+          : 3.1;
+
+        updateEconomicData({ gdpGrowth, inflation, unemployment }).catch(console.warn);
+      } catch (err) {
+        console.warn('FRED fetch failed:', err);
+        updateEconomicData({ gdpGrowth: 2.2, inflation: 3.1, unemployment: 3.9 }).catch(console.warn);
+      }
+    };
+
+    void fetchEcon();
+    const interval = setInterval(() => void fetchEcon(), 12 * 60 * 60 * 1000); // refresh every 12h
+    return () => clearInterval(interval);
+  }, [connectionState.isActive, isHost, updateEconomicData]);
+
+  // Live air quality from Open-Meteo (no API key required)
+  useEffect(() => {
+    if (!connectionState.isActive || !isHost) return;
+    const AQ_URL = 'https://air-quality-api.open-meteo.com/v1/air-quality?latitude=40.73&longitude=-73.99&hourly=us_aqi,us_aqi_pm2_5&timezone=America%2FNew_York&forecast_days=1';
+
+    const fetchAQ = async () => {
+      try {
+        const res = await fetch(AQ_URL);
+        const data = await res.json() as { hourly: { time: string[]; us_aqi: (number | null)[]; us_aqi_pm2_5: (number | null)[] } };
+        // Match current local hour to hourly array index
+        const now = new Date();
+        const pad = (n: number) => String(n).padStart(2, '0');
+        const nyNow = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+        const hourStr = `${nyNow.getFullYear()}-${pad(nyNow.getMonth() + 1)}-${pad(nyNow.getDate())}T${pad(nyNow.getHours())}:00`;
+        let idx = data.hourly.time.indexOf(hourStr);
+        if (idx === -1) idx = 0;
+        const aqi  = data.hourly.us_aqi[idx]      ?? data.hourly.us_aqi.find(v => v !== null)  ?? 40;
+        const pm25 = data.hourly.us_aqi_pm2_5[idx] ?? data.hourly.us_aqi_pm2_5.find(v => v !== null) ?? 20;
+        setAirQuality({ aqi: aqi as number, pm25: pm25 as number });
+      } catch (err) {
+        console.warn('Air quality fetch failed:', err);
+      }
+    };
+
+    void fetchAQ();
+    const interval = setInterval(() => void fetchAQ(), 30 * 60 * 1000); // refresh every 30 min
+    return () => clearInterval(interval);
+  }, [connectionState.isActive, isHost]);
 
   const hasSpawnedAgents = useRef(false);
   useEffect(() => {
     if (!connectionState.isActive || !isHost || hasSpawnedAgents.current) return;
     hasSpawnedAgents.current = true;
-    updateAgentCount({ agentType: 'car', newCount: 200 }).catch(console.warn);
+    // Despawn all first to clear any stale positions, then respawn fresh
+    updateAgentCount({ agentType: 'car', newCount: 0 })
+      .then(() => updateAgentCount({ agentType: 'car', newCount: 200 }))
+      .catch(console.warn);
     updateAgentCount({ agentType: 'pedestrian', newCount: 0 }).catch(console.warn);
-  }, [connectionState.isActive, updateAgentCount]);
+  }, [connectionState.isActive, isHost, updateAgentCount]);
 
   const lastEconomyRef = useRef<number | null>(null);
   const lastDisasterRef = useRef<string>('');
@@ -760,7 +935,10 @@ export default function App() {
   const onlinePlayers = useMemo(() => players.filter(player => player.isOnline), [players]);
 
   const removeWholeBuilding = useCallback((building: SelectedBuilding) => {
-    const edits = building.cells.map(cell => {
+    // Check if this building has stored GDP meta
+    const meta = buildingMetaRows.find(m => m.buildingId === building.id);
+
+    const edits = building.cells.map((cell, idx) => {
       const height = getBuildingColumnHeight(liveCity, cell.x, cell.z);
       return removeBuilding({
         editId: uuidv4(),
@@ -768,12 +946,47 @@ export default function App() {
         fromZ: cell.z,
         fromHeight: height,
         label: `Removed ${building.name} cell at ${cell.x}, ${cell.z}`,
+        buildingMetaId: idx === 0 ? (meta?.buildingId ?? '') : '',
       });
     });
+
+    if (meta) {
+      const fmtGDP = meta.gdpContributionUsd >= 1e9
+        ? `$${(meta.gdpContributionUsd / 1e9).toFixed(2)}B`
+        : meta.gdpContributionUsd >= 1e6
+        ? `$${(meta.gdpContributionUsd / 1e6).toFixed(1)}M`
+        : `$${meta.gdpContributionUsd.toLocaleString()}`;
+      setRemoveFeedback(`Removed ${building.name} — GDP −${fmtGDP}/yr`);
+      window.setTimeout(() => setRemoveFeedback(null), 4000);
+    } else {
+      // For un-tracked buildings, estimate GDP from name via Gemini (fire-and-forget)
+      const key = import.meta.env.VITE_GEMINI_KEY ?? '';
+      const prompt = `You are an urban economist. A building named "${building.name}" is being demolished from a city.
+Estimate its annual GDP contribution (economic output) in USD.
+Reply with ONLY a JSON object like: {"gdp": 5000000000, "reasoning": "brief 1-sentence reason"}
+No markdown, no extra text.`;
+      fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+      })
+        .then(r => r.json())
+        .then(data => {
+          const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '{}';
+          const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
+          if (typeof parsed.gdp === 'number') {
+            const fmtGDP = parsed.gdp >= 1e9 ? `$${(parsed.gdp / 1e9).toFixed(2)}B` : parsed.gdp >= 1e6 ? `$${(parsed.gdp / 1e6).toFixed(1)}M` : `$${parsed.gdp.toLocaleString()}`;
+            setRemoveFeedback(`Removed ${building.name} — Est. GDP impact: −${fmtGDP}/yr`);
+            window.setTimeout(() => setRemoveFeedback(null), 5000);
+          }
+        })
+        .catch(() => {});
+    }
+
     Promise.all(edits)
       .catch(error => console.warn('Building remove failed:', error))
       .finally(clearSelection);
-  }, [clearSelection, liveCity, removeBuilding]);
+  }, [buildingMetaRows, clearSelection, liveCity, removeBuilding]);
 
   const moveWholeBuilding = useCallback((building: SelectedBuilding, target: GridCell) => {
     const dx = target.x - building.anchor.x;
@@ -797,6 +1010,33 @@ export default function App() {
       .finally(clearSelection);
   }, [clearSelection, liveCity, moveBuilding]);
 
+  const handleGetGdpEstimate = useCallback(async () => {
+    if (!buildingDescription.trim()) return;
+    setIsEstimating(true);
+    const key = import.meta.env.VITE_GEMINI_KEY ?? '';
+    const prompt = `You are an urban economist. A building is being placed in a city simulation.
+Building description: "${buildingDescription}"
+Dimensions: ${buildingDimensions.width}×${buildingDimensions.depth} footprint, ${buildingDimensions.height} floors.
+Estimate the annual GDP contribution (economic output) of this building/business in USD.
+Reply with ONLY a JSON object like: {"gdp": 125000000, "reasoning": "brief 1-sentence reason"}
+No markdown, no extra text.`;
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+      });
+      const data = await res.json();
+      const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '{}';
+      const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
+      if (typeof parsed.gdp === 'number') setGdpEstimate(parsed.gdp);
+    } catch (err) {
+      console.warn('Gemini GDP estimate failed:', err);
+    } finally {
+      setIsEstimating(false);
+    }
+  }, [buildingDescription, buildingDimensions]);
+
   const handleMoveSelected = useCallback(() => {
     if (!selectedBuilding) return;
     updatePendingBuildingMove(selectedBuilding);
@@ -819,10 +1059,24 @@ export default function App() {
     }
 
     if (activeTool === 'add_building') {
+      const groupId = uuidv4();
+      const desc = buildingDescription.trim();
+      const gdp = gdpEstimate ?? 0;
       const edits = [];
       for (let w = 0; w < buildingDimensions.width; w++) {
         for (let d = 0; d < buildingDimensions.depth; d++) {
-          edits.push(placeBuilding({ editId: uuidv4(), toX: cell.x + w, toZ: cell.z + d, voxelType: 1, height: buildingDimensions.height, label: `Added building at ${cell.x + w}, ${cell.z + d}`, color: playerColorRef.current }));
+          edits.push(placeBuilding({
+            editId: uuidv4(),
+            toX: cell.x + w,
+            toZ: cell.z + d,
+            voxelType: 1,
+            height: buildingDimensions.height,
+            label: desc || `Added building at ${cell.x + w}, ${cell.z + d}`,
+            color: playerColorRef.current,
+            buildingId: groupId,
+            description: desc,
+            gdpContributionUsd: gdp,
+          }));
         }
       }
       Promise.all(edits).catch(error => console.warn('Building add failed:', error));
@@ -830,7 +1084,7 @@ export default function App() {
     }
     
     if (activeTool === 'add_park') {
-      placeBuilding({ editId: uuidv4(), toX: cell.x, toZ: cell.z, voxelType: 2, height: 3, label: `Added park at ${cell.x}, ${cell.z}`, color: playerColorRef.current });
+      placeBuilding({ editId: uuidv4(), toX: cell.x, toZ: cell.z, voxelType: 2, height: 3, label: `Added park at ${cell.x}, ${cell.z}`, color: playerColorRef.current, buildingId: '', description: '', gdpContributionUsd: 0 });
       return;
     }
 
@@ -898,6 +1152,7 @@ export default function App() {
           fromZ: column.z,
           fromHeight: column.height,
           label: `Fire damaged building column at ${column.x}, ${column.z}`,
+          buildingMetaId: '',
         })
       )
     );
@@ -1012,7 +1267,12 @@ export default function App() {
         clock={clock}
       />
       {disasterOverlay && <div className="disaster-overlay" style={{ background: disasterOverlay }} />}
-      <StatsPanel cityStats={cityStats} citySummary={citySummary} weather={weather} economicData={economicData} players={players} fps={fps} cityShape={cityShape} clock={clock} />
+      {removeFeedback && (
+        <div style={{ position: 'absolute', bottom: '7rem', left: '50%', transform: 'translateX(-50%)', zIndex: 20, padding: '.6rem 1.1rem', borderRadius: 14, border: '1px solid rgba(255,107,107,.5)', color: '#ff9a9a', background: 'rgba(0,0,0,.88)', fontSize: '.88rem', fontWeight: 600, pointerEvents: 'none', whiteSpace: 'nowrap' }}>
+          {removeFeedback}
+        </div>
+      )}
+      <StatsPanel cityStats={cityStats} citySummary={citySummary} weather={displayWeather} economicData={economicData} players={players} fps={fps} cityShape={cityShape} clock={clock} airQuality={displayAQI} />
       <NewsTicker
         cityStats={cityStats}
         players={players}
@@ -1020,27 +1280,28 @@ export default function App() {
         liveCity={liveCity}
       />
       <ActivityFeed players={players} />
-      {showAdvisor && (
-        <AIAdvisor
-          cityStats={cityStats}
-          citySummary={citySummary}
-          weather={weather}
-          economicData={economicData}
-          players={players}
-          cityEdits={cityEdits}
+      <div className="right-sidebar">
+        <EventPanel
+          activeEvents={activeEvents}
+          onArmDisaster={(disaster) => {
+            setArmedDisaster(disaster);
+            setActiveTool('trigger_disaster');
+          }}
+          onClearDisaster={() => clearDisaster()}
+          armedDisasterType={armedDisaster?.type ?? null}
         />
-      )}
-      <TradePanel players={players} tradeOffers={tradeOffers} currentIdentity={currentIdentity} />
-      <EventPanel
-        activeEvents={activeEvents}
-        onArmDisaster={(disaster) => {
-          setArmedDisaster(disaster);
-          setActiveTool('trigger_disaster');
-        }}
-        onClearDisaster={() => clearDisaster()}
-        armedDisasterType={armedDisaster?.type ?? null}
-      />
-      <Toolbar activeTool={activeTool as Tool} selectedCell={selectedCell} moveSource={moveSource} selectedBuildingName={selectedBuilding?.name ?? null} buildingDimensions={buildingDimensions} undoFeedback={undoFeedback} resetFeedback={resetFeedback} isResetting={isResetting} densityHeatmapEnabled={densityHeatmapEnabled} onDensityHeatmapToggle={() => setDensityHeatmapEnabled(enabled => !enabled)} onToolChange={(t) => setActiveTool(t as ToolState)} onDimensionsChange={setBuildingDimensions} onUndo={handleUndo} onFullReset={handleFullReset} agentsVisible={agentsVisible} onAgentsToggle={() => setAgentsVisible(v => !v)} clock={clock} onSetSpeed={(speed) => setClockSpeed({ multiplier: speed })} onTogglePause={() => togglePause()} showAdvisor={showAdvisor} onAdvisorToggle={() => setShowAdvisor(v => !v)} />
+        {showAdvisor && (
+          <AIAdvisor
+            cityStats={cityStats}
+            citySummary={citySummary}
+            weather={weather}
+            economicData={economicData}
+            players={players}
+            cityEdits={cityEdits}
+          />
+        )}
+      </div>
+      <Toolbar activeTool={activeTool as Tool} selectedCell={selectedCell} moveSource={moveSource} selectedBuildingName={selectedBuilding?.name ?? null} buildingDimensions={buildingDimensions} undoFeedback={undoFeedback} resetFeedback={resetFeedback} isResetting={isResetting} densityHeatmapEnabled={densityHeatmapEnabled} onDensityHeatmapToggle={() => setDensityHeatmapEnabled(enabled => !enabled)} onToolChange={(t) => { setActiveTool(t as ToolState); if (t !== 'add_building') { setBuildingDescription(''); setGdpEstimate(null); } }} onDimensionsChange={setBuildingDimensions} onUndo={handleUndo} onFullReset={handleFullReset} agentsVisible={agentsVisible} onAgentsToggle={() => setAgentsVisible(v => !v)} clock={clock} onSetSpeed={(speed) => setClockSpeed({ multiplier: speed })} onTogglePause={() => togglePause()} showAdvisor={showAdvisor} onAdvisorToggle={() => setShowAdvisor(v => !v)} buildingDescription={buildingDescription} onDescriptionChange={desc => { setBuildingDescription(desc); setGdpEstimate(null); }} gdpEstimate={gdpEstimate} onGetGdpEstimate={handleGetGdpEstimate} isEstimating={isEstimating} />
     </main>
   );
 }

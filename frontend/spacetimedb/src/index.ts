@@ -159,6 +159,16 @@ const newsBulletin = table(
   }
 );
 
+const buildingMeta = table(
+  { name: 'BuildingMeta', public: true },
+  {
+    buildingId: t.string().primaryKey(),
+    description: t.string(),
+    gdpContributionUSD: t.f64(),
+    placedAt: t.i64(),
+  }
+);
+
 const spacetimedb = schema({
   cityEdit,
   player,
@@ -171,6 +181,7 @@ const spacetimedb = schema({
   simulationClock,
   surfaceGrid,
   newsBulletin,
+  buildingMeta,
 });
 
 export default spacetimedb;
@@ -303,8 +314,9 @@ export const removeBuilding = spacetimedb.reducer(
     fromZ: t.i32(),
     fromHeight: t.i32(),
     label: t.string(),
+    buildingMetaId: t.string(),
   },
-  (ctx, { editId, fromX, fromZ, fromHeight, label }) => {
+  (ctx, { editId, fromX, fromZ, fromHeight, label, buildingMetaId }) => {
     const identity = ctx.sender.toHexString();
     const playerRow = ctx.db.player.identity.find(identity);
     const ts = nowMs(ctx);
@@ -325,6 +337,10 @@ export const removeBuilding = spacetimedb.reducer(
       createdAt: ts,
     });
 
+    if (buildingMetaId !== '') {
+      ctx.db.buildingMeta.buildingId.delete(buildingMetaId);
+    }
+
     if (playerRow) {
       ctx.db.player.identity.update({
         ...playerRow,
@@ -344,8 +360,11 @@ export const placeBuilding = spacetimedb.reducer(
     height: t.i32(),
     label: t.string(),
     color: t.string(),
+    buildingId: t.string(),
+    description: t.string(),
+    gdpContributionUSD: t.f64(),
   },
-  (ctx, { editId, toX, toZ, voxelType, height, label, color }) => {
+  (ctx, { editId, toX, toZ, voxelType, height, label, color, buildingId, description, gdpContributionUSD }) => {
     const identity = ctx.sender.toHexString();
     const ts = nowMs(ctx);
 
@@ -364,6 +383,11 @@ export const placeBuilding = spacetimedb.reducer(
       color,
       createdAt: ts,
     });
+
+    // Store GDP meta once per building group (same buildingId shared across all cells)
+    if (buildingId !== '' && !ctx.db.buildingMeta.buildingId.find(buildingId)) {
+      ctx.db.buildingMeta.insert({ buildingId, description, gdpContributionUSD, placedAt: ts });
+    }
 
     const playerRow = ctx.db.player.identity.find(identity);
     if (playerRow) {
@@ -475,6 +499,10 @@ export const resetCity = spacetimedb.reducer(ctx => {
 
   for (const eventRow of ctx.db.event.iter()) {
     ctx.db.event.eventId.delete(eventRow.eventId);
+  }
+
+  for (const meta of ctx.db.buildingMeta.iter()) {
+    ctx.db.buildingMeta.buildingId.delete(meta.buildingId);
   }
 
   const stats = defaultStats(updatedAt);
@@ -699,95 +727,60 @@ function isValidTarget(agentType: string, type: number): boolean {
   }
 }
 
-let lcgSeed = 0;
-function myRandom(ctx: any): number {
-  if (lcgSeed === 0) {
-    lcgSeed = Number(ctx.timestamp) || 123456789;
+// Used only by advanceClock for monthly economic drift.
+function hashStr(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h = (h ^ s.charCodeAt(i)) >>> 0;
+    h = Math.imul(h, 16777619) >>> 0;
   }
-  lcgSeed = (lcgSeed * 1664525 + 1013904223) >>> 0;
-  return lcgSeed / 4294967296;
+  return h;
 }
 
-function randomSpawnTarget(ctx: any, agentType: string): { x: number; z: number } {
-  const gridInfo = ctx.db.surfaceGrid.id.find(0);
-  if (!gridInfo) {
-    return { x: myRandom(ctx) * 200, z: myRandom(ctx) * 200 };
-  }
-  
-  let attempts = 0;
-  while (attempts < 1000) {
-    const x = Math.floor(myRandom(ctx) * gridInfo.width);
-    const z = Math.floor(myRandom(ctx) * gridInfo.depth);
-    const t = getSurfaceType(ctx, x, z);
-    if (isValidTarget(agentType, t)) {
-      return { x: x + 0.5, z: z + 0.5 };
-    }
-    attempts++;
-  }
-  return { x: 100, z: 100 }; // Failsafe
+function agentRand(seed: number, n: number): number {
+  let s = (seed ^ Math.imul(n, 2654435761)) >>> 0;
+  s = (s ^ (s >>> 16)) >>> 0;
+  s = Math.imul(s, 0x45d9f3b) >>> 0;
+  s = (s ^ (s >>> 16)) >>> 0;
+  s = Math.imul(s, 0x45d9f3b) >>> 0;
+  s = (s ^ (s >>> 16)) >>> 0;
+  return s / 4294967296;
 }
 
-function randomWalkTarget(ctx: any, agentType: string, cx: number, cz: number, targetX: number, targetZ: number): { x: number; z: number } {
+// Find a random valid spawn cell using ctx.random() (deterministic per-reducer).
+function spawnOnRoad(ctx: any, agentType: string): { x: number; z: number } {
   const gridInfo = ctx.db.surfaceGrid.id.find(0);
-  if (!gridInfo) {
-    return { x: cx + (myRandom(ctx) * 2 - 1) * 2, z: cz + (myRandom(ctx) * 2 - 1) * 2 };
+  if (!gridInfo) return { x: 50, z: 100 };
+  for (let i = 0; i < 2000; i++) {
+    const x = Math.floor(ctx.random() * gridInfo.width);
+    const z = Math.floor(ctx.random() * gridInfo.depth);
+    if (isValidTarget(agentType, getSurfaceType(ctx, x, z))) return { x: x + 0.5, z: z + 0.5 };
   }
-  
-  const ix = Math.floor(targetX);
-  const iz = Math.floor(targetZ);
-  
-  const dirs = [
-    { dx: 1, dz: 0 },
-    { dx: -1, dz: 0 },
-    { dx: 0, dz: 1 },
-    { dx: 0, dz: -1 },
-  ];
-  
-  for (let i = dirs.length - 1; i > 0; i--) {
-    const j = Math.floor(myRandom(ctx) * (i + 1));
-    const temp = dirs[i];
-    dirs[i] = dirs[j];
-    dirs[j] = temp;
-  }
-  
-  let bestDir = null;
-  for (const d of dirs) {
-    const nx = ix + d.dx;
-    const nz = iz + d.dz;
-    const t = getSurfaceType(ctx, nx, nz);
-    if (isValidTarget(agentType, t)) {
-      if (Math.abs(nx + 0.5 - cx) < 0.1 && Math.abs(nz + 0.5 - cz) < 0.1) {
-        if (!bestDir) bestDir = d;
-      } else {
-        bestDir = d;
-        break;
-      }
+  return { x: 50, z: 100 };
+}
+
+const LANE_OFFSET = 0.22; // right-hand lane offset perpendicular to heading
+
+// Lane-adjusted target: offset right of heading so cars drive on the right side.
+// Right-perpendicular of (hdx, hdz) in x-z where +z is south: (-hdz, hdx).
+function laneTarget(cellX: number, cellZ: number, dx: number, dz: number): { tx: number; tz: number } {
+  return {
+    tx: cellX + 0.5 + (-dz * LANE_OFFSET),
+    tz: cellZ + 0.5 + (dx * LANE_OFFSET),
+  };
+}
+
+// Pick the first adjacent valid road cell and return it as the initial waypoint + heading.
+function firstWaypoint(ctx: any, agentType: string, px: number, pz: number): { tx: number; tz: number; dx: number; dz: number } {
+  const ix = Math.floor(px);
+  const iz = Math.floor(pz);
+  for (const d of [{ dx: 1, dz: 0 }, { dx: -1, dz: 0 }, { dx: 0, dz: 1 }, { dx: 0, dz: -1 }]) {
+    if (isValidTarget(agentType, getSurfaceType(ctx, ix + d.dx, iz + d.dz))) {
+      const lt = laneTarget(ix + d.dx, iz + d.dz, d.dx, d.dz);
+      return { tx: lt.tx, tz: lt.tz, dx: d.dx, dz: d.dz };
     }
   }
-  
-  if (!bestDir) {
-    return randomSpawnTarget(ctx, agentType);
-  }
-  
-  let curX = ix;
-  let curZ = iz;
-  
-  for (let i = 0; i < 1; i++) {
-    const nx = curX + bestDir.dx;
-    const nz = curZ + bestDir.dz;
-    const t = getSurfaceType(ctx, nx, nz);
-    
-    if (!isValidTarget(agentType, t)) break;
-    
-    curX = nx;
-    curZ = nz;
-    
-    const ortho1 = isValidTarget(agentType, getSurfaceType(ctx, curX + bestDir.dz, curZ + bestDir.dx));
-    const ortho2 = isValidTarget(agentType, getSurfaceType(ctx, curX - bestDir.dz, curZ - bestDir.dx));
-    if (ortho1 || ortho2) break;
-  }
-  
-  return { x: curX + 0.5, z: curZ + 0.5 };
+  return { tx: px + 1, tz: pz, dx: 1, dz: 0 };
 }
 
 export const tickAgents = spacetimedb.reducer(ctx => {
@@ -797,121 +790,134 @@ export const tickAgents = spacetimedb.reducer(ctx => {
   const eventItem = ctx.db.event.iter().next().value;
   const isDisaster = !!eventItem;
 
-
   for (const a of ctx.db.agent.iter()) {
-    let nextX = a.x;
-    let nextZ = a.z;
-    let state = a.state;
     let targetX = a.targetX;
     let targetZ = a.targetZ;
+    let state = a.state;
+    const moveSpeed = a.speed * (clock?.speedMultiplier ?? 1.0);
 
-    let moveSpeed = a.speed * (clock?.speedMultiplier ?? 1.0);
-
-    if (isDisaster && eventItem) {
-      const dx = a.x - eventItem.affectedX;
-      const dz = a.z - eventItem.affectedZ;
-      const distSq = dx * dx + dz * dz;
-      if (distSq < eventItem.radius * eventItem.radius) {
-        state = 'fleeing';
-        moveSpeed *= 2;
-        const dist = Math.sqrt(distSq) || 1;
-        targetX = a.x + (dx / dist) * 10;
-        targetZ = a.z + (dz / dist) * 10;
-      }
-    } else if (state === 'fleeing') {
-      state = 'moving';
-      const target = randomWalkTarget(ctx, a.agentType, a.x, a.z, targetX, targetZ);
-      targetX = target.x;
-      targetZ = target.z;
-    }
-
-    if (state.startsWith('wait:')) {
-      state = 'moving';
-    }
-
-    if (state !== 'fleeing') {
-      let distanceToMove = moveSpeed;
-      let steps = 0;
-      let prevX = a.x;
-      let prevZ = a.z;
-      
-      while (distanceToMove > 0.01 && steps < 10) {
-        steps++;
-        const dx = targetX - nextX;
-        const dz = targetZ - nextZ;
-        const dist = Math.sqrt(dx * dx + dz * dz);
-        
-        if (dist < distanceToMove) {
-          nextX = targetX;
-          nextZ = targetZ;
-          distanceToMove -= dist;
-          
-          const target = randomWalkTarget(ctx, a.agentType, prevX, prevZ, targetX, targetZ);
-          
-          if (Math.abs(target.x - nextX) > 50) {
-            nextX = target.x;
-            nextZ = target.z;
-            targetX = target.x;
-            targetZ = target.z;
-            break; 
-          }
-          
-          prevX = targetX;
-          prevZ = targetZ;
-          
-          targetX = target.x;
-          targetZ = target.z;
-        } else {
-          nextX += (dx / dist) * distanceToMove;
-          nextZ += (dz / dist) * distanceToMove;
-          distanceToMove = 0;
+    // Parse stored heading from state "moving:dx:dz" — default east on first tick
+    let hdx = 1;
+    let hdz = 0;
+    if (state.includes(':')) {
+      const parts = state.split(':');
+      if (parts.length >= 3) {
+        const pd = parseInt(parts[1]);
+        const pz = parseInt(parts[2]);
+        if ((Math.abs(pd) === 1 && pz === 0) || (pd === 0 && Math.abs(pz) === 1)) {
+          hdx = pd;
+          hdz = pz;
         }
       }
-    } else {
-      const dx = targetX - a.x;
-      const dz = targetZ - a.z;
-      const dist = Math.sqrt(dx * dx + dz * dz) || 1;
-      nextX += (dx / dist) * moveSpeed;
-      nextZ += (dz / dist) * moveSpeed;
     }
 
-    // Wrap around boundaries just in case
-    if (nextX < 0) nextX += 287;
-    if (nextX > 287) nextX -= 287;
-    if (nextZ < 0) nextZ += 222;
-    if (nextZ > 222) nextZ -= 222;
+    // Fleeing overrides target: move away from disaster center
+    if (isDisaster && eventItem) {
+      const ddx = a.x - eventItem.affectedX;
+      const ddz = a.z - eventItem.affectedZ;
+      if (ddx * ddx + ddz * ddz < eventItem.radius * eventItem.radius) {
+        state = `fleeing:${hdx}:${hdz}`;
+        const dist = Math.sqrt(ddx * ddx + ddz * ddz) || 1;
+        targetX = a.x + (ddx / dist) * 50;
+        targetZ = a.z + (ddz / dist) * 50;
+      }
+    } else if (state.startsWith('fleeing')) {
+      // Disaster gone — resume with current heading
+      state = `moving:${hdx}:${hdz}`;
+    }
 
-    ctx.db.agent.agentId.update({
-      ...a,
-      x: nextX,
-      z: nextZ,
-      targetX,
-      targetZ,
-      state
-    });
+    // When within 0.6 cells of waypoint, pick the next one using heading momentum
+    const dtx = targetX - a.x;
+    const dtz = targetZ - a.z;
+    if (dtx * dtx + dtz * dtz < 0.36 && !state.startsWith('fleeing')) {
+      const ix = Math.floor(targetX);
+      const iz = Math.floor(targetZ);
+
+      // Forward/turns first (no U-turns unless truly boxed in)
+      const fwdDirs = [
+        { dx: hdx,  dz: hdz,  w: 4.0 }, // straight
+        { dx: -hdz, dz: hdx,  w: 1.0 }, // left turn
+        { dx: hdz,  dz: -hdx, w: 1.0 }, // right turn
+      ];
+      const uTurn = { dx: -hdx, dz: -hdz, w: 1.0 };
+
+      // Prefer forward/turn; only allow U-turn when all three are blocked
+      let candidates = fwdDirs.filter(d =>
+        isValidTarget(a.agentType, getSurfaceType(ctx, ix + d.dx, iz + d.dz))
+      );
+      if (candidates.length === 0 &&
+          isValidTarget(a.agentType, getSurfaceType(ctx, ix + uTurn.dx, iz + uTurn.dz))) {
+        candidates = [uTurn];
+      }
+
+      if (candidates.length > 0) {
+        const totalW = candidates.reduce((s, d) => s + d.w, 0);
+        let r = ctx.random() * totalW;
+        let chosen = candidates[0];
+        for (const d of candidates) {
+          r -= d.w;
+          if (r <= 0) { chosen = d; break; }
+        }
+        // Apply right-hand lane offset so cars keep to their side of the road
+        const lt = laneTarget(ix + chosen.dx, iz + chosen.dz, chosen.dx, chosen.dz);
+        targetX = lt.tx;
+        targetZ = lt.tz;
+        hdx = chosen.dx;
+        hdz = chosen.dz;
+      } else {
+        // True dead-end: teleport to a fresh road cell (rare)
+        const spawn = spawnOnRoad(ctx, a.agentType);
+        const wp = firstWaypoint(ctx, a.agentType, spawn.x, spawn.z);
+        targetX = wp.tx;
+        targetZ = wp.tz;
+        hdx = wp.dx;
+        hdz = wp.dz;
+        ctx.db.agent.agentId.update({ ...a, x: spawn.x, z: spawn.z, targetX, targetZ, state: `moving:${hdx}:${hdz}` });
+        continue;
+      }
+      state = `moving:${hdx}:${hdz}`;
+    }
+
+    // Move toward current target
+    const dx = targetX - a.x;
+    const dz = targetZ - a.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    let nextX = a.x;
+    let nextZ = a.z;
+    if (dist > 0.01) {
+      const move = Math.min(dist, moveSpeed * (state.startsWith('fleeing') ? 2 : 1));
+      nextX = a.x + (dx / dist) * move;
+      nextZ = a.z + (dz / dist) * move;
+    }
+
+    // Boundary clamp
+    nextX = Math.max(0, Math.min(286, nextX));
+    nextZ = Math.max(0, Math.min(221, nextZ));
+
+    ctx.db.agent.agentId.update({ ...a, x: nextX, z: nextZ, targetX, targetZ, state });
   }
 });
 
 export const spawnAgents = spacetimedb.reducer(
   { count: t.i32(), agentType: t.string() },
   (ctx, { count, agentType }) => {
+    const ts = nowMs(ctx);
+    const speed = agentType === 'car' ? 3.0 : 0.3;
+    const color = agentType === 'car' ? '#3b82f6' : '#f43f5e';
     for (let i = 0; i < count; i++) {
-      const pos = randomSpawnTarget(ctx, agentType);
-      const target = randomWalkTarget(ctx, agentType, pos.x, pos.z, pos.x, pos.z);
-      const speed = agentType === 'car' ? 3.0 : 0.3;
-      const color = agentType === 'car' ? '#3b82f6' : '#f43f5e';
-      
+      const pos = spawnOnRoad(ctx, agentType);
+      const wp = firstWaypoint(ctx, agentType, pos.x, pos.z);
       ctx.db.agent.insert({
-        agentId: `agent_${agentType}_${i}_${nowMs(ctx)}_${Math.floor(myRandom(ctx) * 10000)}`,
+        agentId: `agent_${agentType}_${i}_${ts}`,
         agentType,
         x: pos.x,
         z: pos.z,
-        targetX: target.x,
-        targetZ: target.z,
+        targetX: wp.tx,
+        targetZ: wp.tz,
         speed,
-        state: 'moving',
+        state: `moving:${wp.dx}:${wp.dz}`,
         color,
-        spawnedAt: nowMs(ctx),
+        spawnedAt: ts,
       });
     }
   }
@@ -935,24 +941,24 @@ export const updateAgentCount = spacetimedb.reducer(
     }
     
     if (currentAgents.length < newCount) {
-      // Spawn more
       const toSpawn = newCount - currentAgents.length;
+      const ts = nowMs(ctx);
+      const speed = agentType === 'car' ? 3.0 : 0.3;
+      const color = agentType === 'car' ? '#3b82f6' : '#f43f5e';
       for (let i = 0; i < toSpawn; i++) {
-        const pos = randomSpawnTarget(ctx, agentType);
-        const target = randomWalkTarget(ctx, agentType, pos.x, pos.z, pos.x, pos.z);
-        const speed = agentType === 'car' ? 3.0 : 0.3;
-        const color = agentType === 'car' ? '#3b82f6' : '#f43f5e';
+        const pos = spawnOnRoad(ctx, agentType);
+        const wp = firstWaypoint(ctx, agentType, pos.x, pos.z);
         ctx.db.agent.insert({
-          agentId: `agent_${agentType}_${i}_${nowMs(ctx)}_${Math.floor(myRandom(ctx) * 10000)}`,
+          agentId: `agent_${agentType}_${currentAgents.length + i}_${ts}`,
           agentType,
           x: pos.x,
           z: pos.z,
-          targetX: target.x,
-          targetZ: target.z,
+          targetX: wp.tx,
+          targetZ: wp.tz,
           speed,
-          state: 'moving',
+          state: `moving:${wp.dx}:${wp.dz}`,
           color,
-          spawnedAt: nowMs(ctx),
+          spawnedAt: ts,
         });
       }
     } else if (currentAgents.length > newCount) {
@@ -991,7 +997,7 @@ export const advanceClock = spacetimedb.reducer((ctx) => {
   if (newMonth > oldMonth) {
     const stats = ctx.db.cityStats.id.find(0);
     if (stats) {
-      const drift = (myRandom(ctx) * 6) - 3;
+      const drift = (agentRand(Number(nowMs(ctx)) >>> 0, newMonth) * 6) - 3;
       ctx.db.cityStats.id.update({
         ...stats,
         economyScore: clampScore(stats.economyScore + drift)

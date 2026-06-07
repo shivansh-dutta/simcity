@@ -66,6 +66,7 @@ import UploadSurfaceGridReducer from "./upload_surface_grid_reducer";
 
 // Import all table schema definitions
 import AgentRow from "./agent_table";
+import BuildingMetaRow from "./building_meta_table";
 import CityEditRow from "./city_edit_table";
 import CityStatsRow from "./city_stats_table";
 import EconomicDataRow from "./economic_data_table";
@@ -92,6 +93,17 @@ const tablesSchema = __schema({
       { name: 'Agent_agent_id_key', constraint: 'unique', columns: ['agentId'] },
     ],
   }, AgentRow),
+  buildingMeta: __table({
+    name: 'BuildingMeta',
+    indexes: [
+      { accessor: 'buildingId', name: 'BuildingMeta_building_id_idx_btree', algorithm: 'btree', columns: [
+        'buildingId',
+      ] },
+    ],
+    constraints: [
+      { name: 'BuildingMeta_building_id_key', constraint: 'unique', columns: ['buildingId'] },
+    ],
+  }, BuildingMetaRow),
   cityEdit: __table({
     name: 'CityEdit',
     indexes: [

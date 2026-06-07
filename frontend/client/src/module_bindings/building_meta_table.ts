@@ -10,15 +10,9 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
-export default {
-  editId: __t.string(),
-  toX: __t.i32(),
-  toZ: __t.i32(),
-  voxelType: __t.i32(),
-  height: __t.i32(),
-  label: __t.string(),
-  color: __t.string(),
-  buildingId: __t.string(),
+export default __t.row({
+  buildingId: __t.string().primaryKey().name("building_id"),
   description: __t.string(),
-  gdpContributionUsd: __t.f64(),
-};
+  gdpContributionUsd: __t.f64().name("gdp_contribution_usd"),
+  placedAt: __t.i64().name("placed_at"),
+});

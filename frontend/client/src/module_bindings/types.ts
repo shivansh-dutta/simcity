@@ -24,6 +24,14 @@ export const Agent = __t.object("Agent", {
 });
 export type Agent = __Infer<typeof Agent>;
 
+export const BuildingMeta = __t.object("BuildingMeta", {
+  buildingId: __t.string(),
+  description: __t.string(),
+  gdpContributionUsd: __t.f64(),
+  placedAt: __t.i64(),
+});
+export type BuildingMeta = __Infer<typeof BuildingMeta>;
+
 export const CityEdit = __t.object("CityEdit", {
   editId: __t.string(),
   editType: __t.string(),

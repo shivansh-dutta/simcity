@@ -16,4 +16,5 @@ export default {
   fromZ: __t.i32(),
   fromHeight: __t.i32(),
   label: __t.string(),
+  buildingMetaId: __t.string(),
 };

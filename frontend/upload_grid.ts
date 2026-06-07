@@ -1,10 +1,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { DbConnection } from './client/src/module_bindings';
+import { DbConnection } from './client/src/module_bindings/index.js';
 
 const DATA_FILE = path.resolve(process.cwd(), '../backend/data/manhattan.json');
 const STDB_HOST = 'wss://maincloud.spacetimedb.com';
-const STDB_MODULE = 'urban-whatif';
+const STDB_MODULE = 'urban-whatif-xunfn';
 
 function main() {
     console.log(`Loading ${DATA_FILE}...`);

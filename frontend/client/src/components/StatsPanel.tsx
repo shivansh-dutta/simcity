@@ -9,6 +9,7 @@ type StatsPanelProps = {
   fps: number;
   cityShape: number[] | null;
   clock: SimulationClock | null;
+  airQuality: { aqi: number; pm25: number } | null;
 };
 
 function scoreClass(value: number) {
@@ -35,7 +36,24 @@ function formatDollars(value: number) {
   return `$${value.toLocaleString()}`;
 }
 
-export default function StatsPanel({ cityStats, citySummary, weather, economicData, players, fps, cityShape, clock }: StatsPanelProps) {
+function aqiLabel(aqi: number): string {
+  if (aqi <= 50) return 'Good';
+  if (aqi <= 100) return 'Moderate';
+  if (aqi <= 150) return 'Sensitive';
+  if (aqi <= 200) return 'Unhealthy';
+  if (aqi <= 300) return 'Very Unhealthy';
+  return 'Hazardous';
+}
+
+function aqiColor(aqi: number): string {
+  if (aqi <= 50) return '#46d9a8';
+  if (aqi <= 100) return '#f4d35e';
+  if (aqi <= 150) return '#f97316';
+  if (aqi <= 200) return '#ef4444';
+  return '#9333ea';
+}
+
+export default function StatsPanel({ cityStats, citySummary, weather, economicData, players, fps, cityShape, clock, airQuality }: StatsPanelProps) {
   const onlinePlayers = players.filter(player => player.isOnline);
 
   // We use cityStats for scores because it is the authoritative SpacetimeDB state,
@@ -67,15 +85,26 @@ export default function StatsPanel({ cityStats, citySummary, weather, economicDa
       <ScoreRow label="Traffic" value={cityStats?.trafficScore ?? 0} />
       <ScoreRow label="Green" value={cityStats?.greenScore ?? 0} />
       
-      <h3>Weather</h3>
-      <div className="metric-row"><span>Temp</span><strong>{weather ? `${weather.tempC.toFixed(1)} C` : '...'}</strong></div>
+      <h3>Weather &amp; Air Quality</h3>
+      <div className="metric-row"><span>Temp</span><strong>{weather ? `${weather.tempC.toFixed(1)} °C` : '...'}</strong></div>
       <div className="metric-row"><span>Wind</span><strong>{weather ? `${weather.windSpeed.toFixed(1)} km/h` : '...'}</strong></div>
-      
-      <h3>Economic Data</h3>
+      {airQuality && (
+        <div className="metric-row">
+          <span>AQI (NYC)</span>
+          <strong style={{ color: aqiColor(airQuality.aqi) }}>
+            {airQuality.aqi} — {aqiLabel(airQuality.aqi)}
+          </strong>
+        </div>
+      )}
+      {airQuality && (
+        <div className="metric-row"><span>PM2.5 AQI</span><strong style={{ color: aqiColor(airQuality.pm25) }}>{airQuality.pm25}</strong></div>
+      )}
+
+      <h3>Economic Data <span style={{ fontSize: '0.7rem', color: '#6b7280', fontWeight: 400 }}>live · FRED</span></h3>
       <div className="metric-row"><span>GDP Contrib</span><strong>{citySummary ? formatDollars(citySummary.gdpDollars) : '...'}</strong></div>
-      <div className="metric-row"><span>Unemployment</span><strong>{citySummary ? `${citySummary.unemployment.toFixed(1)}%` : '...'}</strong></div>
-      <div className="metric-row"><span>GDP growth</span><strong>{economicData ? `${economicData.gdpGrowth.toFixed(1)}%` : '...'}</strong></div>
-      <div className="metric-row"><span>Inflation</span><strong>{economicData ? `${economicData.inflation.toFixed(1)}%` : '...'}</strong></div>
+      <div className="metric-row"><span>NY Unemployment</span><strong>{economicData ? `${economicData.unemployment.toFixed(1)}%` : '...'}</strong></div>
+      <div className="metric-row"><span>US GDP Growth</span><strong>{economicData ? `${economicData.gdpGrowth.toFixed(1)}%` : '...'}</strong></div>
+      <div className="metric-row"><span>US Inflation</span><strong>{economicData ? `${economicData.inflation.toFixed(1)}%` : '...'}</strong></div>
       
       <h3>Players Online</h3>
       <div className="player-list">
