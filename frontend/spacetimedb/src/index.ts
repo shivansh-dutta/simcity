@@ -30,6 +30,12 @@ const player = table(
     isOnline: t.bool(),
     score: t.i32(),
     lastSeen: t.i64(),
+    isPlacingDisaster: t.bool(),
+    disasterPreviewX: t.i32(),
+    disasterPreviewZ: t.i32(),
+    disasterPreviewRadius: t.i32(),
+    lastAction: t.string(),
+    lastActionAt: t.i64(),
   }
 );
 
@@ -210,6 +216,12 @@ export const joinCity = spacetimedb.reducer(
       isOnline: true,
       score: existing?.score ?? 0,
       lastSeen: nowMs(ctx),
+      isPlacingDisaster: false,
+      disasterPreviewX: existing?.disasterPreviewX ?? 0,
+      disasterPreviewZ: existing?.disasterPreviewZ ?? 0,
+      disasterPreviewRadius: existing?.disasterPreviewRadius ?? 0,
+      lastAction: existing?.lastAction ?? '',
+      lastActionAt: existing?.lastActionAt ?? 0n,
     };
 
     if (existing) {
@@ -221,8 +233,15 @@ export const joinCity = spacetimedb.reducer(
 );
 
 export const moveCursor = spacetimedb.reducer(
-  { x: t.i32(), z: t.i32() },
-  (ctx, { x, z }) => {
+  {
+    x: t.i32(),
+    z: t.i32(),
+    isPlacingDisaster: t.bool(),
+    disasterPreviewX: t.i32(),
+    disasterPreviewZ: t.i32(),
+    disasterPreviewRadius: t.i32(),
+  },
+  (ctx, { x, z, isPlacingDisaster, disasterPreviewX, disasterPreviewZ, disasterPreviewRadius }) => {
     const identity = ctx.sender.toHexString();
     const existing = ctx.db.player.identity.find(identity);
     if (!existing) return;
@@ -231,6 +250,10 @@ export const moveCursor = spacetimedb.reducer(
       ...existing,
       cursorX: x,
       cursorZ: z,
+      isPlacingDisaster,
+      disasterPreviewX,
+      disasterPreviewZ,
+      disasterPreviewRadius,
       lastSeen: nowMs(ctx),
     });
   }
@@ -271,6 +294,7 @@ export const removeBuilding = spacetimedb.reducer(
   (ctx, { editId, fromX, fromZ, fromHeight, label }) => {
     const identity = ctx.sender.toHexString();
     const playerRow = ctx.db.player.identity.find(identity);
+    const ts = nowMs(ctx);
 
     ctx.db.cityEdit.insert({
       editId,
@@ -285,8 +309,16 @@ export const removeBuilding = spacetimedb.reducer(
       label,
       placedBy: identity,
       color: playerRow?.color ?? '',
-      createdAt: nowMs(ctx),
+      createdAt: ts,
     });
+
+    if (playerRow) {
+      ctx.db.player.identity.update({
+        ...playerRow,
+        lastAction: `Removed building at grid position ${fromX} ${fromZ}`,
+        lastActionAt: ts,
+      });
+    }
   }
 );
 
@@ -301,6 +333,9 @@ export const placeBuilding = spacetimedb.reducer(
     color: t.string(),
   },
   (ctx, { editId, toX, toZ, voxelType, height, label, color }) => {
+    const identity = ctx.sender.toHexString();
+    const ts = nowMs(ctx);
+
     ctx.db.cityEdit.insert({
       editId,
       editType: 'place',
@@ -312,10 +347,19 @@ export const placeBuilding = spacetimedb.reducer(
       voxelType,
       height,
       label,
-      placedBy: ctx.sender.toHexString(),
+      placedBy: identity,
       color,
-      createdAt: nowMs(ctx),
+      createdAt: ts,
     });
+
+    const playerRow = ctx.db.player.identity.find(identity);
+    if (playerRow) {
+      ctx.db.player.identity.update({
+        ...playerRow,
+        lastAction: `Placed building at ${toX} ${toZ}`,
+        lastActionAt: ts,
+      });
+    }
   }
 );
 
@@ -332,6 +376,9 @@ export const moveBuilding = spacetimedb.reducer(
     color: t.string(),
   },
   (ctx, { editId, fromX, fromZ, fromHeight, toX, toZ, height, label, color }) => {
+    const identity = ctx.sender.toHexString();
+    const ts = nowMs(ctx);
+
     ctx.db.cityEdit.insert({
       editId,
       editType: 'move',
@@ -343,10 +390,19 @@ export const moveBuilding = spacetimedb.reducer(
       voxelType: 1,
       height,
       label,
-      placedBy: ctx.sender.toHexString(),
+      placedBy: identity,
       color,
-      createdAt: nowMs(ctx),
+      createdAt: ts,
     });
+
+    const playerRow = ctx.db.player.identity.find(identity);
+    if (playerRow) {
+      ctx.db.player.identity.update({
+        ...playerRow,
+        lastAction: `Moved building from ${fromX} ${fromZ} to ${toX} ${toZ}`,
+        lastActionAt: ts,
+      });
+    }
   }
 );
 
@@ -456,6 +512,15 @@ export const triggerDisaster = spacetimedb.reducer(
       ctx.db.cityStats.id.update(next);
     } else {
       ctx.db.cityStats.insert(next);
+    }
+
+    const playerRow = ctx.db.player.identity.find(ctx.sender.toHexString());
+    if (playerRow) {
+      ctx.db.player.identity.update({
+        ...playerRow,
+        lastAction: `Triggered ${eventType} near ${affectedX} ${affectedZ}`,
+        lastActionAt: createdAt,
+      });
     }
   }
 );
