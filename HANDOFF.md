@@ -1,6 +1,34 @@
 # HANDOFF — Urban What-If
 
 ## Last completed phase
+Phase 8 — Live Player Visibility & Multiplayer Presence
+
+## What exists and works
+- `spacetimedb/src/index.ts`: Player table has 6 new presence fields (isPlacingDisaster, disasterPreviewX/Z/Radius, lastAction, lastActionAt). moveCursor now takes 6 params. removeBuilding, placeBuilding, moveBuilding, and triggerDisaster all write lastAction/lastActionAt to the calling player's row.
+- `CityScene.tsx`: Other players appear as pulsing colored spheres (8% breathing scale via useFrame + Math.sin) with username pill labels (Drei Html). When a player has isPlacingDisaster=true, a semi-transparent colored ring shows their disaster target radius.
+- `ActivityFeed.tsx`: Fixed bottom-left overlay showing last 8 player actions, live "Xs ago" timestamps updating every second, entries fade out after 30s.
+- `App.tsx`: Name-entry modal on first visit (skipped if name already in localStorage, city loads in background concurrently). Throttled moveCursor (150ms) during disaster placement mode. Clears isPlacingDisaster flag when exiting disaster mode. Passes currentIdentity to CityScene so players don't see their own cursor sphere.
+- SpacetimeDB module deployed to `urban-whatif-xunfn` on maincloud. VITE_STDB_MODULE updated to match.
+
+## Key decisions made that differ from SPEC.md
+- moveCursor signature extended from 2 to 6 params; all callers in App.tsx updated.
+- ActivityFeed reads directly from the Player table subscription — no new table needed.
+- Players do not see their own cursor sphere (filtered by currentIdentity in CityScene).
+
+## Current known issues
+- Traffic agents still move like ants (existing bug from Phase 7 — not addressed here).
+
+## Verify the previous phase still works
+`cd frontend && npm run build`
+
+## Next phase starts with
+Fix agent-based pathing so cars exhibit fluid vehicle motion and stay strictly on roads without phasing through buildings.
+
+## Phases Before That
+
+# HANDOFF — Urban What-If
+
+## Last completed phase
 Phase 7+ — Disaster Polish & Multiplayer Stability
 
 ## What exists and works
