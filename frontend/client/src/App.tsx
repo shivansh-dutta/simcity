@@ -432,6 +432,8 @@ function styles() {
 }
 
 export default function App() {
+  const [showNameEntry, setShowNameEntry] = useState<boolean>(() => !localStorage.getItem(PLAYER_NAME_KEY));
+  const [nameInput, setNameInput] = useState<string>('');
   const [baseGrid, setBaseGrid] = useState<VoxelGridData | null>(null);
   const [buildingLookup, setBuildingLookup] = useState<BuildingLookup | null>(null);
   const [cityShape, setCityShape] = useState<number[] | null>(null);
@@ -557,10 +559,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!connectionState.isActive || !currentIdentity || joinedIdentityRef.current === currentIdentity) return;
+    if (showNameEntry || !connectionState.isActive || !currentIdentity || joinedIdentityRef.current === currentIdentity) return;
     joinedIdentityRef.current = currentIdentity;
     joinCity({ username: playerNameRef.current, color: playerColorRef.current }).catch(error => console.error('Failed to join city:', error));
-  }, [connectionState.isActive, currentIdentity, joinCity]);
+  }, [connectionState.isActive, currentIdentity, joinCity, showNameEntry]);
 
   useEffect(() => {
     if (!connectionState.isActive || !isHost) return;
@@ -692,6 +694,14 @@ export default function App() {
       heightLevels,
     };
   }, [liveCity]);
+
+  const handleNameSubmit = useCallback(() => {
+    const name = nameInput.trim();
+    if (!name) return;
+    localStorage.setItem(PLAYER_NAME_KEY, name);
+    playerNameRef.current = name;
+    setShowNameEntry(false);
+  }, [nameInput]);
 
   const clearSelection = useCallback(() => {
     setSelectedCell(null);
@@ -906,6 +916,50 @@ export default function App() {
   return (
     <main className="app-shell">
       <style>{styles()}</style>
+      {showNameEntry && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 100,
+          display: 'grid', placeItems: 'center',
+          background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(8px)',
+        }}>
+          <div style={{
+            width: 'min(420px, calc(100vw - 2rem))', padding: '2rem',
+            border: '1px solid rgba(255,255,255,0.14)', borderRadius: 28,
+            background: 'rgba(0,0,0,0.88)', display: 'grid', gap: '1.2rem',
+          }}>
+            <h1 style={{ margin: 0, fontSize: '1.4rem', color: '#f4f1e8' }}>Enter Your Name</h1>
+            <p style={{ margin: 0, color: '#aeb7bd', fontSize: '0.9rem' }}>
+              Choose a display name. Other players will see it above your cursor.
+            </p>
+            <input
+              type="text"
+              placeholder="e.g. Alice"
+              value={nameInput}
+              maxLength={24}
+              autoFocus
+              onChange={e => setNameInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleNameSubmit(); }}
+              style={{
+                padding: '0.65rem 1rem', borderRadius: 999,
+                border: '1px solid rgba(255,255,255,0.2)',
+                background: 'rgba(255,255,255,0.08)', color: '#f4f1e8',
+                fontSize: '1rem', outline: 'none',
+              }}
+            />
+            <button
+              type="button"
+              disabled={!nameInput.trim()}
+              onClick={handleNameSubmit}
+              style={{
+                padding: '0.65rem', borderRadius: 999, fontSize: '1rem',
+                ...(nameInput.trim() ? { background: '#ffd700', color: '#0a0a0a', borderColor: '#ffd700' } : {}),
+              }}
+            >
+              Enter City
+            </button>
+          </div>
+        </div>
+      )}
       <CityScene
         baseGrid={baseGrid}
         edits={cityEdits}
