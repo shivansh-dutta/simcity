@@ -13,4 +13,8 @@ import {
 export default {
   x: __t.i32(),
   z: __t.i32(),
+  isPlacingDisaster: __t.bool(),
+  disasterPreviewX: __t.i32(),
+  disasterPreviewZ: __t.i32(),
+  disasterPreviewRadius: __t.i32(),
 };

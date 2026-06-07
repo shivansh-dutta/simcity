@@ -19,4 +19,10 @@ export default __t.row({
   isOnline: __t.bool().name("is_online"),
   score: __t.i32(),
   lastSeen: __t.i64().name("last_seen"),
+  isPlacingDisaster: __t.bool().name("is_placing_disaster"),
+  disasterPreviewX: __t.i32().name("disaster_preview_x"),
+  disasterPreviewZ: __t.i32().name("disaster_preview_z"),
+  disasterPreviewRadius: __t.i32().name("disaster_preview_radius"),
+  lastAction: __t.string().name("last_action"),
+  lastActionAt: __t.i64().name("last_action_at"),
 });

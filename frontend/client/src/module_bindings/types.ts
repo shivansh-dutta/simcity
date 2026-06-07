@@ -89,6 +89,12 @@ export const Player = __t.object("Player", {
   isOnline: __t.bool(),
   score: __t.i32(),
   lastSeen: __t.i64(),
+  isPlacingDisaster: __t.bool(),
+  disasterPreviewX: __t.i32(),
+  disasterPreviewZ: __t.i32(),
+  disasterPreviewRadius: __t.i32(),
+  lastAction: __t.string(),
+  lastActionAt: __t.i64(),
 });
 export type Player = __Infer<typeof Player>;
 
