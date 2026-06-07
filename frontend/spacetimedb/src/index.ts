@@ -147,6 +147,18 @@ const surfaceGrid = table(
   }
 );
 
+const newsBulletin = table(
+  { name: 'NewsBulletin', public: true },
+  {
+    bulletinId: t.string().primaryKey(),
+    headlineText: t.string(),
+    bodyText: t.string(),
+    disasterType: t.string(),
+    triggeredBy: t.string(),
+    createdAt: t.i64(),
+  }
+);
+
 const spacetimedb = schema({
   cityEdit,
   player,
@@ -158,6 +170,7 @@ const spacetimedb = schema({
   agent,
   simulationClock,
   surfaceGrid,
+  newsBulletin,
 });
 
 export default spacetimedb;
@@ -527,12 +540,16 @@ export const triggerDisaster = spacetimedb.reducer(
 
 export const clearDisaster = spacetimedb.reducer(ctx => {
   const updatedAt = nowMs(ctx);
+
+  for (const eventRow of ctx.db.event.iter()) {
+    ctx.db.event.eventId.delete(eventRow.eventId);
+  }
+
   const existing = ctx.db.cityStats.id.find(0);
   const next = {
     ...(existing ?? defaultStats(updatedAt)),
     disasterActive: '',
     disasterIntensity: 0,
-    // Note: populationLoss is intentionally preserved!
     lastUpdated: updatedAt,
   };
 
@@ -1022,3 +1039,23 @@ export const togglePause = spacetimedb.reducer((ctx) => {
     ctx.db.simulationClock.id.update({ ...clock, isPaused: !clock.isPaused });
   }
 });
+
+export const postBulletin = spacetimedb.reducer(
+  {
+    bulletinId: t.string(),
+    headlineText: t.string(),
+    bodyText: t.string(),
+    disasterType: t.string(),
+    triggeredBy: t.string(),
+  },
+  (ctx, { bulletinId, headlineText, bodyText, disasterType, triggeredBy }) => {
+    ctx.db.newsBulletin.insert({
+      bulletinId,
+      headlineText,
+      bodyText,
+      disasterType,
+      triggeredBy,
+      createdAt: nowMs(ctx),
+    });
+  }
+);

@@ -80,6 +80,16 @@ export const Event = __t.object("Event", {
 });
 export type Event = __Infer<typeof Event>;
 
+export const NewsBulletin = __t.object("NewsBulletin", {
+  bulletinId: __t.string(),
+  headlineText: __t.string(),
+  bodyText: __t.string(),
+  disasterType: __t.string(),
+  triggeredBy: __t.string(),
+  createdAt: __t.i64(),
+});
+export type NewsBulletin = __Infer<typeof NewsBulletin>;
+
 export const Player = __t.object("Player", {
   identity: __t.string(),
   username: __t.string(),

@@ -45,6 +45,7 @@ import LeaveCityReducer from "./leave_city_reducer";
 import MoveBuildingReducer from "./move_building_reducer";
 import MoveCursorReducer from "./move_cursor_reducer";
 import PlaceBuildingReducer from "./place_building_reducer";
+import PostBulletinReducer from "./post_bulletin_reducer";
 import RemoveBuildingReducer from "./remove_building_reducer";
 import ResetCityReducer from "./reset_city_reducer";
 import RespondToTradeReducer from "./respond_to_trade_reducer";
@@ -69,6 +70,7 @@ import CityEditRow from "./city_edit_table";
 import CityStatsRow from "./city_stats_table";
 import EconomicDataRow from "./economic_data_table";
 import EventRow from "./event_table";
+import NewsBulletinRow from "./news_bulletin_table";
 import PlayerRow from "./player_table";
 import SimulationClockRow from "./simulation_clock_table";
 import SurfaceGridRow from "./surface_grid_table";
@@ -134,6 +136,17 @@ const tablesSchema = __schema({
       { name: 'Event_event_id_key', constraint: 'unique', columns: ['eventId'] },
     ],
   }, EventRow),
+  newsBulletin: __table({
+    name: 'NewsBulletin',
+    indexes: [
+      { accessor: 'bulletinId', name: 'NewsBulletin_bulletin_id_idx_btree', algorithm: 'btree', columns: [
+        'bulletinId',
+      ] },
+    ],
+    constraints: [
+      { name: 'NewsBulletin_bulletin_id_key', constraint: 'unique', columns: ['bulletinId'] },
+    ],
+  }, NewsBulletinRow),
   player: __table({
     name: 'Player',
     indexes: [
@@ -204,6 +217,7 @@ const reducersSchema = __reducers(
   __reducerSchema("move_building", MoveBuildingReducer),
   __reducerSchema("move_cursor", MoveCursorReducer),
   __reducerSchema("place_building", PlaceBuildingReducer),
+  __reducerSchema("post_bulletin", PostBulletinReducer),
   __reducerSchema("remove_building", RemoveBuildingReducer),
   __reducerSchema("reset_city", ResetCityReducer),
   __reducerSchema("respond_to_trade", RespondToTradeReducer),

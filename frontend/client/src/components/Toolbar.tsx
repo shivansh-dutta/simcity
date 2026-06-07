@@ -25,6 +25,8 @@ type ToolbarProps = {
   clock: SimulationClock | null;
   onSetSpeed: (speed: number) => void;
   onTogglePause: () => void;
+  showAdvisor: boolean;
+  onAdvisorToggle: () => void;
 };
 
 const TOOLS: { id: Tool; label: string }[] = [
@@ -55,6 +57,8 @@ export default function Toolbar({
   clock,
   onSetSpeed,
   onTogglePause,
+  showAdvisor,
+  onAdvisorToggle,
 }: ToolbarProps) {
   const isPaused = clock?.isPaused ?? false;
   const currentSpeed = clock?.speedMultiplier ?? 1;
@@ -78,6 +82,9 @@ export default function Toolbar({
         </button>
         <button className={agentsVisible ? 'active' : ''} type="button" onClick={onAgentsToggle}>
           👥 Agents
+        </button>
+        <button className={showAdvisor ? 'active' : ''} type="button" onClick={onAdvisorToggle}>
+          🤖 Advisor
         </button>
       </div>
 

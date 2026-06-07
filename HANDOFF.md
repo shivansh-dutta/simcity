@@ -1,6 +1,57 @@
 # HANDOFF — Urban What-If
 
 ## Last completed phase
+Phase 10 — AI Disaster Narrator (Breaking News Ticker)
+
+## What exists and works
+- `spacetimedb/src/index.ts`: Added `NewsBulletin` public table (bulletinId PK, headlineText, bodyText, disasterType, triggeredBy, createdAt). Added `postBulletin` reducer. Module redeployed to `urban-whatif-xunfn`, bindings regenerated.
+- `client/src/components/NewsTicker.tsx`: Watches Event table via useTable onInsert. When a new event arrives within 10s, the triggering player calls Gemini (`gemini-3-flash-preview`) to generate headline + body. Posts via `postBulletin` reducer. All clients display from NewsBulletin table via onInsert. Slide-down animation (400ms), 12s visible, 2s gap between queued bulletins. 20s Gemini cooldown — falls back to generic template. Player name shown on right.
+- `client/src/App.tsx`: NewsTicker rendered at top of app shell, receives cityStats, players, currentIdentity, liveCity.
+
+## Key decisions made that differ from SPEC.md
+- Only the player who triggered the disaster calls Gemini (checked via `row.triggeredBy === currentIdentity`), preventing duplicate API calls from all connected clients.
+- Uses `gemini-3-flash-preview` (same as AIAdvisor) instead of `gemini-2.0-flash` from spec — the latter has quota 0 on this account.
+
+## Current known issues
+- Traffic agents still move like ants (pre-existing bug from Phase 7).
+
+## Verify the previous phase still works
+`cd frontend && npm run build`
+
+## Next phase starts with
+Trigger an earthquake disaster and confirm the news banner slides down within 5 seconds on both browser tabs with identical text.
+
+## Phases Before That
+
+# HANDOFF — Urban What-If
+
+## Last completed phase
+Phase 9 — AI City Advisor (Gemini API Integration)
+
+## What exists and works
+- `client/src/components/AIAdvisor.tsx`: Panel using plain fetch to Gemini 2.0 Flash. Builds prompt from live SpacetimeDB state (cityStats, citySummary, weather, economicData, players, cityEdits). Typewriter animation at 20 chars/sec. 30s cooldown via useRef. Auto-analyze every 90s toggle. Three lowest-score metric pills (red/yellow/green). Pulsing border via CSS animation while loading. Custom question input appends to base prompt.
+- `client/src/components/Toolbar.tsx`: Added "🤖 Advisor" toggle button with showAdvisor/onAdvisorToggle props.
+- `client/src/App.tsx`: showAdvisor state, imports AIAdvisor, renders it conditionally on right side at top:380px.
+- `client/.env.local`: Added VITE_GEMINI_KEY= (user must fill in the actual key from Google Cloud Console).
+
+## Key decisions made that differ from SPEC.md
+- None
+
+## Current known issues
+- VITE_GEMINI_KEY is empty in .env.local — must be filled with a real Google Cloud Gemini API key before the advisor will work.
+- Traffic agents still move like ants (pre-existing bug from Phase 7).
+
+## Verify the previous phase still works
+`cd frontend && npm run build`
+
+## Next phase starts with
+Fill VITE_GEMINI_KEY in client/.env.local with a real Gemini API key, then test by clicking "🤖 Advisor" in the toolbar and clicking "Analyze Now".
+
+## Phases Before That
+
+# HANDOFF — Urban What-If
+
+## Last completed phase
 Phase 8 — Live Player Visibility & Multiplayer Presence
 
 ## What exists and works

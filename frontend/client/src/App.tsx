@@ -2,7 +2,9 @@ import { startTransition, useCallback, useEffect, useMemo, useRef, useState } fr
 import { useReducer as useStdbReducer, useSpacetimeDB, useTable } from 'spacetimedb/react';
 import { v4 as uuidv4 } from 'uuid';
 import ActivityFeed from './components/ActivityFeed';
+import AIAdvisor from './components/AIAdvisor';
 import CityScene from './components/CityScene';
+import NewsTicker from './components/NewsTicker';
 import EventPanel from './components/EventPanel';
 import StatsPanel from './components/StatsPanel';
 import Toolbar, { type MoveSource } from './components/Toolbar';
@@ -428,7 +430,9 @@ function styles() {
     .building-info-panel div { display: flex; gap: .35rem; margin-top: .2rem; }
     .building-info-panel button { padding: .35rem .5rem; font-size: .75rem; }
     .density-label { white-space: nowrap; padding: .32rem .5rem; border: 1px solid rgba(255,255,255,.28); border-radius: 999px; color: #fff; background: rgba(0,0,0,.78); box-shadow: 0 10px 28px rgba(0,0,0,.38); font-size: .74rem; font-weight: 700; }
-    @media (max-width: 760px) { .event-panel { top: auto; right: 1rem; bottom: 9.5rem; } .stats-panel { max-height: 45vh; } .toolbar { bottom: .5rem; } }
+    .ai-advisor-panel { right: 1rem; top: 380px; width: min(315px, calc(100vw - 2rem)); padding: 1rem; }
+    @keyframes advisorPulse { 0%,100% { box-shadow: 0 0 0 2px rgba(255,215,0,.35), 0 24px 80px rgba(0,0,0,.38); } 50% { box-shadow: 0 0 0 5px rgba(255,215,0,.65), 0 24px 80px rgba(0,0,0,.38); } }
+    @media (max-width: 760px) { .event-panel { top: auto; right: 1rem; bottom: 9.5rem; } .ai-advisor-panel { top: auto; right: 1rem; bottom: 9.5rem; display: none; } .stats-panel { max-height: 45vh; } .toolbar { bottom: .5rem; } }
   `;
 }
 
@@ -452,6 +456,7 @@ export default function App() {
   const [resetFeedback, setResetFeedback] = useState<string | null>(null);
   const [isResetting, setIsResetting] = useState(false);
   const [agentsVisible, setAgentsVisible] = useState(true);
+  const [showAdvisor, setShowAdvisor] = useState(false);
   const [fps, setFps] = useState(0);
   const playerColorRef = useRef(persistentValue(PLAYER_COLOR_KEY, randomPlayerColor));
   const playerNameRef = useRef(persistentValue(PLAYER_NAME_KEY, () => `Planner-${Math.floor(1000 + Math.random() * 9000)}`));
@@ -1008,7 +1013,23 @@ export default function App() {
       />
       {disasterOverlay && <div className="disaster-overlay" style={{ background: disasterOverlay }} />}
       <StatsPanel cityStats={cityStats} citySummary={citySummary} weather={weather} economicData={economicData} players={players} fps={fps} cityShape={cityShape} clock={clock} />
+      <NewsTicker
+        cityStats={cityStats}
+        players={players}
+        currentIdentity={currentIdentity}
+        liveCity={liveCity}
+      />
       <ActivityFeed players={players} />
+      {showAdvisor && (
+        <AIAdvisor
+          cityStats={cityStats}
+          citySummary={citySummary}
+          weather={weather}
+          economicData={economicData}
+          players={players}
+          cityEdits={cityEdits}
+        />
+      )}
       <TradePanel players={players} tradeOffers={tradeOffers} currentIdentity={currentIdentity} />
       <EventPanel
         activeEvents={activeEvents}
@@ -1019,7 +1040,7 @@ export default function App() {
         onClearDisaster={() => clearDisaster()}
         armedDisasterType={armedDisaster?.type ?? null}
       />
-      <Toolbar activeTool={activeTool as Tool} selectedCell={selectedCell} moveSource={moveSource} selectedBuildingName={selectedBuilding?.name ?? null} buildingDimensions={buildingDimensions} undoFeedback={undoFeedback} resetFeedback={resetFeedback} isResetting={isResetting} densityHeatmapEnabled={densityHeatmapEnabled} onDensityHeatmapToggle={() => setDensityHeatmapEnabled(enabled => !enabled)} onToolChange={(t) => setActiveTool(t as ToolState)} onDimensionsChange={setBuildingDimensions} onUndo={handleUndo} onFullReset={handleFullReset} agentsVisible={agentsVisible} onAgentsToggle={() => setAgentsVisible(v => !v)} clock={clock} onSetSpeed={(speed) => setClockSpeed({ multiplier: speed })} onTogglePause={() => togglePause()} />
+      <Toolbar activeTool={activeTool as Tool} selectedCell={selectedCell} moveSource={moveSource} selectedBuildingName={selectedBuilding?.name ?? null} buildingDimensions={buildingDimensions} undoFeedback={undoFeedback} resetFeedback={resetFeedback} isResetting={isResetting} densityHeatmapEnabled={densityHeatmapEnabled} onDensityHeatmapToggle={() => setDensityHeatmapEnabled(enabled => !enabled)} onToolChange={(t) => setActiveTool(t as ToolState)} onDimensionsChange={setBuildingDimensions} onUndo={handleUndo} onFullReset={handleFullReset} agentsVisible={agentsVisible} onAgentsToggle={() => setAgentsVisible(v => !v)} clock={clock} onSetSpeed={(speed) => setClockSpeed({ multiplier: speed })} onTogglePause={() => togglePause()} showAdvisor={showAdvisor} onAdvisorToggle={() => setShowAdvisor(v => !v)} />
     </main>
   );
 }
